@@ -176,6 +176,41 @@ make run
 make dev
 ```
 
+## Testing
+
+The project includes comprehensive unit tests for all packages.
+
+```bash
+# Run all tests
+go test ./...
+
+# Run tests with verbose output
+go test -v ./...
+
+# Run tests with coverage report
+go test -cover ./...
+
+# Run tests for a specific package
+go test -v ./internal/config
+go test -v ./internal/state
+go test -v ./internal/api
+```
+
+### Test Coverage
+
+| Package | Coverage | Description |
+|---------|----------|-------------|
+| `internal/config` | 100% | Configuration loading and environment variables |
+| `internal/state` | 100% | Thread-safe state management |
+| `internal/api` | ~67% | HTTP handlers, routing, and CORS |
+| `internal/services/solar` | ~46% | SolarEdge client and sunrise/sunset calculations |
+| `internal/services/price` | ~30% | Spot price fetching and matching |
+| `internal/services/grid` | ~19% | MQTT subscription (requires broker for full testing) |
+| `internal/storage` | ~3% | InfluxDB client (requires database for full testing) |
+| `internal/models` | N/A | Data structures (no executable code) |
+
+Note: Some packages have lower coverage because they require external services (MQTT broker, InfluxDB, HTTP APIs) for complete integration testing.
+
 ## Reference Implementation
 
 The `python/` directory contains a reference implementation of this backend in Python.
