@@ -15,18 +15,27 @@ import (
 )
 
 const (
-	dataTimeout = 1 * time.Minute // Mark data as invalid if no message received within this duration
+	dataTimeout           = 1 * time.Minute  // Mark data as invalid if no message received within this duration
+	initialReconnectDelay = 1 * time.Second  // Initial delay before reconnect attempt
+	maxReconnectDelay     = 2 * time.Minute  // Maximum delay between reconnect attempts
+	keepAliveInterval     = 30 * time.Second // MQTT keep-alive ping interval
+	pingTimeout           = 10 * time.Second // Timeout for keep-alive ping response
+	connectTimeout        = 30 * time.Second // Timeout for initial connection
+	maxReconnectAttempts  = 0                // 0 = unlimited reconnect attempts
 )
 
 // Service handles grid power consumption via MQTT
 type Service struct {
 	client          mqtt.Client
 	topic           string
+	brokerURL       string
 	state           *state.Manager
 	influxDB        *storage.InfluxDBClient
 	logger          *slog.Logger
 	lastMessageTime time.Time
 	lastMessageMu   sync.RWMutex
+	reconnectCount  int
+	reconnectMu     sync.Mutex
 }
 
 // NewService creates a new grid service
@@ -38,21 +47,37 @@ func NewService(cfg *config.Config, state *state.Manager, influxDB *storage.Infl
 		return nil, fmt.Errorf("MQTT topic is required")
 	}
 
+	brokerURL := fmt.Sprintf("tcp://%s:%d", cfg.MQTTBrokerHost, cfg.MQTTBrokerPort)
+
 	s := &Service{
-		topic:    cfg.MQTTTopic,
-		state:    state,
-		influxDB: influxDB,
-		logger:   logger,
+		topic:     cfg.MQTTTopic,
+		brokerURL: brokerURL,
+		state:     state,
+		influxDB:  influxDB,
+		logger:    logger,
 	}
 
 	opts := mqtt.NewClientOptions().
-		AddBroker(fmt.Sprintf("tcp://%s:%d", cfg.MQTTBrokerHost, cfg.MQTTBrokerPort)).
-		SetClientID("sotehus-backend-grid").
+		AddBroker(brokerURL).
+		SetClientID(fmt.Sprintf("sotehus-backend-grid-%d", time.Now().UnixNano())).
+		// Reconnection settings
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
-		SetConnectRetryInterval(5 * time.Second).
+		SetConnectRetryInterval(initialReconnectDelay).
+		SetMaxReconnectInterval(maxReconnectDelay).
+		// Keep-alive settings
+		SetKeepAlive(keepAliveInterval).
+		SetPingTimeout(pingTimeout).
+		SetConnectTimeout(connectTimeout).
+		// Clean session - start fresh on each connection
+		SetCleanSession(true).
+		// Buffer settings for offline messages
+		SetWriteTimeout(10 * time.Second).
+		SetOrderMatters(false).
+		// Handlers
 		SetOnConnectHandler(s.onConnect).
-		SetConnectionLostHandler(s.onConnectionLost)
+		SetConnectionLostHandler(s.onConnectionLost).
+		SetReconnectingHandler(s.onReconnecting)
 
 	if cfg.MQTTUsername != "" && cfg.MQTTPassword != "" {
 		opts.SetUsername(cfg.MQTTUsername)
@@ -66,15 +91,20 @@ func NewService(cfg *config.Config, state *state.Manager, influxDB *storage.Infl
 
 // Start connects to MQTT and starts receiving grid power data
 func (s *Service) Start(ctx context.Context) error {
-	s.logger.Info("Connecting to MQTT broker...")
+	s.logger.Info("Connecting to MQTT broker...", "broker", s.brokerURL, "topic", s.topic)
 
 	token := s.client.Connect()
-	if token.Wait() && token.Error() != nil {
-		return fmt.Errorf("failed to connect to MQTT broker: %w", token.Error())
+	if token.WaitTimeout(connectTimeout) && token.Error() != nil {
+		s.logger.Warn("Initial MQTT connection failed, will retry in background", "error", token.Error())
+		s.state.UpdateGridError("Connecting to MQTT broker...")
+		// Don't return error - the auto-reconnect will keep trying
 	}
 
 	// Start timeout checker goroutine
 	go s.checkDataTimeout(ctx)
+
+	// Start connection monitor goroutine
+	go s.monitorConnection(ctx)
 
 	// Wait for context cancellation
 	<-ctx.Done()
@@ -82,6 +112,23 @@ func (s *Service) Start(ctx context.Context) error {
 
 	s.client.Disconnect(1000)
 	return nil
+}
+
+// monitorConnection periodically checks connection status and logs it
+func (s *Service) monitorConnection(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !s.client.IsConnected() {
+				s.logger.Debug("MQTT client not connected, auto-reconnect is active")
+			}
+		}
+	}
 }
 
 // checkDataTimeout periodically checks if data has timed out
@@ -108,7 +155,12 @@ func (s *Service) checkDataTimeout(ctx context.Context) {
 }
 
 func (s *Service) onConnect(client mqtt.Client) {
-	s.logger.Info("Connected to MQTT broker, subscribing to topic", "topic", s.topic)
+	// Reset reconnect counter on successful connection
+	s.reconnectMu.Lock()
+	s.reconnectCount = 0
+	s.reconnectMu.Unlock()
+
+	s.logger.Info("Connected to MQTT broker, subscribing to topic", "topic", s.topic, "broker", s.brokerURL)
 
 	token := client.Subscribe(s.topic, 1, s.onMessage)
 	if token.Wait() && token.Error() != nil {
@@ -121,8 +173,18 @@ func (s *Service) onConnect(client mqtt.Client) {
 }
 
 func (s *Service) onConnectionLost(client mqtt.Client, err error) {
-	s.logger.Warn("MQTT connection lost", "error", err)
-	s.state.UpdateGridError("MQTT connection lost")
+	s.logger.Warn("MQTT connection lost, will attempt to reconnect", "error", err, "broker", s.brokerURL)
+	s.state.UpdateGridError("MQTT connection lost - reconnecting...")
+}
+
+func (s *Service) onReconnecting(client mqtt.Client, opts *mqtt.ClientOptions) {
+	s.reconnectMu.Lock()
+	s.reconnectCount++
+	count := s.reconnectCount
+	s.reconnectMu.Unlock()
+
+	s.logger.Info("Attempting to reconnect to MQTT broker", "attempt", count, "broker", s.brokerURL)
+	s.state.UpdateGridError(fmt.Sprintf("Reconnecting to MQTT (attempt %d)...", count))
 }
 
 func (s *Service) onMessage(client mqtt.Client, msg mqtt.Message) {
