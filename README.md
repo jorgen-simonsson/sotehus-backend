@@ -217,7 +217,3 @@ go test -v ./internal/api
 | `internal/models` | N/A | Data structures (no executable code) |
 
 Note: Some packages have lower coverage because they require external services (MQTT broker, InfluxDB, HTTP APIs) for complete integration testing.
-
-## Reference Implementation
-
-The `python/` directory contains a reference implementation of this backend in Python.
