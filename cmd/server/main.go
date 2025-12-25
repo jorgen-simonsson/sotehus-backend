@@ -18,8 +18,21 @@ import (
 	"github.com/jorgen-simonsson/sotehus-backend/internal/services/solar"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/state"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/storage"
+
+	_ "github.com/jorgen-simonsson/sotehus-backend/docs"
 )
 
+// @title Sotehus Backend API
+// @version 1.0
+// @description Real-time energy monitoring API providing grid consumption, electricity price, and solar production data.
+
+// @contact.name API Support
+// @contact.url https://github.com/jorgen-simonsson/sotehus-backend
+
+// @license.name MIT
+// @license.url https://opensource.org/licenses/MIT
+
+// @BasePath /
 func main() {
 	// Setup structured logging
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{

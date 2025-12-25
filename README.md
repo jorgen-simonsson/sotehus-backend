@@ -9,6 +9,13 @@ This backend service aggregates data from multiple sources to provide:
 - **Electricity Price** - Current spot price per kWh from Swedish electricity market
 - **Solar Production** - Current solar panel output from SolarEdge API
 
+## Swagger UI
+
+Interactive API documentation is available at:
+```
+http://localhost:8080/swagger/index.html
+```
+
 ## API Endpoints
 
 ### `GET /api/data`

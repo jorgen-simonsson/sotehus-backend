@@ -6,6 +6,7 @@ import (
 
 	"github.com/jorgen-simonsson/sotehus-backend/internal/state"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/storage"
+	httpSwagger "github.com/swaggo/http-swagger"
 )
 
 // NewRouter creates a new HTTP router with all routes configured
@@ -18,6 +19,9 @@ func NewRouter(state *state.Manager, influxDB *storage.InfluxDBClient, logger *s
 	mux.HandleFunc("GET /api/data", handler.GetData)
 	mux.HandleFunc("GET /api/timeseries", handler.GetTimeSeries)
 	mux.HandleFunc("GET /health", handler.HealthCheck)
+
+	// Swagger UI
+	mux.Handle("GET /swagger/", httpSwagger.WrapHandler)
 
 	// Add logging middleware
 	return loggingMiddleware(logger, corsMiddleware(mux))

@@ -1,0 +1,192 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "Real-time energy monitoring API providing grid consumption, electricity price, and solar production data.",
+        "title": "Sotehus Backend API",
+        "contact": {
+            "name": "API Support",
+            "url": "https://github.com/jorgen-simonsson/sotehus-backend"
+        },
+        "license": {
+            "name": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+        },
+        "version": "1.0"
+    },
+    "basePath": "/",
+    "paths": {
+        "/api/data": {
+            "get": {
+                "description": "Returns current status of grid consumption, electricity price, and solar production",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "energy"
+                ],
+                "summary": "Get current energy data",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/timeseries": {
+            "get": {
+                "description": "Returns statistics about the historical data stored in InfluxDB",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "energy"
+                ],
+                "summary": "Get time series statistics",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.TimeSeriesResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to query time series data",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "503": {
+                        "description": "InfluxDB not configured",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/health": {
+            "get": {
+                "description": "Returns the health status of the API",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.HealthResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "api.HealthResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "api.TimeSeriesResponse": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer",
+                    "example": 523847
+                },
+                "first": {
+                    "type": "string",
+                    "example": "2025-11-01T16:10"
+                },
+                "last": {
+                    "type": "string",
+                    "example": "2025-12-07T16:30"
+                }
+            }
+        },
+        "models.APIResponse": {
+            "type": "object",
+            "properties": {
+                "grid": {
+                    "$ref": "#/definitions/models.GridData"
+                },
+                "price": {
+                    "$ref": "#/definitions/models.PriceData"
+                },
+                "solar": {
+                    "$ref": "#/definitions/models.SolarData"
+                }
+            }
+        },
+        "models.GridData": {
+            "type": "object",
+            "properties": {
+                "lastUpdate": {
+                    "type": "string",
+                    "example": "2025-12-07T16:30:00+01:00"
+                },
+                "message": {
+                    "type": "string",
+                    "example": ""
+                },
+                "power": {
+                    "type": "number",
+                    "example": 245.5
+                },
+                "valid": {
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
+        "models.PriceData": {
+            "type": "object",
+            "properties": {
+                "lastUpdate": {
+                    "type": "string",
+                    "example": "2025-12-07T16:15:00+01:00"
+                },
+                "price": {
+                    "type": "number",
+                    "example": 1.2
+                },
+                "valid": {
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
+        "models.SolarData": {
+            "type": "object",
+            "properties": {
+                "lastUpdate": {
+                    "type": "string",
+                    "example": "2025-12-07T15:00:00+01:00"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "No sun"
+                },
+                "power": {
+                    "type": "number",
+                    "example": 0
+                },
+                "valid": {
+                    "type": "boolean",
+                    "example": false
+                }
+            }
+        }
+    }
+}

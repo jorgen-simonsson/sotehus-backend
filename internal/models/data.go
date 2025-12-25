@@ -4,25 +4,25 @@ import "time"
 
 // GridData represents current grid power consumption
 type GridData struct {
-	Valid      bool      `json:"valid"`
-	Power      float64   `json:"power"`
-	LastUpdate time.Time `json:"lastUpdate"`
-	Message    string    `json:"message"`
+	Valid      bool      `json:"valid" example:"true"`
+	Power      float64   `json:"power" example:"245.5"`
+	LastUpdate time.Time `json:"lastUpdate" example:"2025-12-07T16:30:00+01:00"`
+	Message    string    `json:"message" example:""`
 }
 
 // PriceData represents current electricity spot price
 type PriceData struct {
-	Valid      bool      `json:"valid"`
-	Price      float64   `json:"price"`
-	LastUpdate time.Time `json:"lastUpdate"`
+	Valid      bool      `json:"valid" example:"true"`
+	Price      float64   `json:"price" example:"1.20"`
+	LastUpdate time.Time `json:"lastUpdate" example:"2025-12-07T16:15:00+01:00"`
 }
 
 // SolarData represents current solar power production
 type SolarData struct {
-	Valid      bool      `json:"valid"`
-	Power      float64   `json:"power"`
-	LastUpdate time.Time `json:"lastUpdate"`
-	Message    string    `json:"message"`
+	Valid      bool      `json:"valid" example:"false"`
+	Power      float64   `json:"power" example:"0"`
+	LastUpdate time.Time `json:"lastUpdate" example:"2025-12-07T15:00:00+01:00"`
+	Message    string    `json:"message" example:"No sun"`
 }
 
 // APIResponse represents the combined response for the /api/data endpoint

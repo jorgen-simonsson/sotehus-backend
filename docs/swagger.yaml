@@ -1,0 +1,132 @@
+basePath: /
+definitions:
+  api.HealthResponse:
+    properties:
+      status:
+        example: ok
+        type: string
+    type: object
+  api.TimeSeriesResponse:
+    properties:
+      count:
+        example: 523847
+        type: integer
+      first:
+        example: 2025-11-01T16:10
+        type: string
+      last:
+        example: 2025-12-07T16:30
+        type: string
+    type: object
+  models.APIResponse:
+    properties:
+      grid:
+        $ref: '#/definitions/models.GridData'
+      price:
+        $ref: '#/definitions/models.PriceData'
+      solar:
+        $ref: '#/definitions/models.SolarData'
+    type: object
+  models.GridData:
+    properties:
+      lastUpdate:
+        example: "2025-12-07T16:30:00+01:00"
+        type: string
+      message:
+        example: ""
+        type: string
+      power:
+        example: 245.5
+        type: number
+      valid:
+        example: true
+        type: boolean
+    type: object
+  models.PriceData:
+    properties:
+      lastUpdate:
+        example: "2025-12-07T16:15:00+01:00"
+        type: string
+      price:
+        example: 1.2
+        type: number
+      valid:
+        example: true
+        type: boolean
+    type: object
+  models.SolarData:
+    properties:
+      lastUpdate:
+        example: "2025-12-07T15:00:00+01:00"
+        type: string
+      message:
+        example: No sun
+        type: string
+      power:
+        example: 0
+        type: number
+      valid:
+        example: false
+        type: boolean
+    type: object
+info:
+  contact:
+    name: API Support
+    url: https://github.com/jorgen-simonsson/sotehus-backend
+  description: Real-time energy monitoring API providing grid consumption, electricity
+    price, and solar production data.
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  title: Sotehus Backend API
+  version: "1.0"
+paths:
+  /api/data:
+    get:
+      description: Returns current status of grid consumption, electricity price,
+        and solar production
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: Get current energy data
+      tags:
+      - energy
+  /api/timeseries:
+    get:
+      description: Returns statistics about the historical data stored in InfluxDB
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.TimeSeriesResponse'
+        "500":
+          description: Failed to query time series data
+          schema:
+            type: string
+        "503":
+          description: InfluxDB not configured
+          schema:
+            type: string
+      summary: Get time series statistics
+      tags:
+      - energy
+  /health:
+    get:
+      description: Returns the health status of the API
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.HealthResponse'
+      summary: Health check
+      tags:
+      - system
+swagger: "2.0"
