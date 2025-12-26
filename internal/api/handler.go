@@ -60,7 +60,7 @@ type HealthResponse struct {
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+	_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
 }
 
 // TimeSeriesResponse represents the response for /api/timeseries

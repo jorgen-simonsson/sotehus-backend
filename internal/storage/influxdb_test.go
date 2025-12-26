@@ -107,9 +107,8 @@ func TestConfigBuildURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			url := "http://" + tt.host + ":" + string(rune(tt.port+'0'))
 			// Use fmt.Sprintf to match what the actual code does
-			url = "http://" + tt.host
+			url := "http://" + tt.host
 			if tt.port != 0 {
 				url = url + ":" + itoa(tt.port)
 			}
