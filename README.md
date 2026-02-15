@@ -8,6 +8,7 @@ This backend service aggregates data from multiple sources to provide:
 - **Grid Consumption** - Real-time power consumption from smart meter via MQTT
 - **Electricity Price** - Current spot price per kWh from Swedish electricity market
 - **Solar Production** - Current solar panel output from SolarEdge API
+- **Grid Frequency** - Real-time grid frequency from FFR collector via MQTT
 
 ## Swagger UI
 
@@ -41,6 +42,11 @@ Returns current status of all energy sources.
         "power": 0,
         "lastUpdate": "2025-12-07T15:00:00+01:00",
         "message": "No sun"
+    },
+    "frequency": {
+        "valid": true,
+        "frequency": 50.01,
+        "lastUpdate": "2025-12-07T16:30:00+01:00"
     }
 }
 ```
@@ -49,6 +55,7 @@ Returns current status of all energy sources.
 - `valid` - Whether the data is current and reliable
 - `power` - Power in Watts
 - `price` - Price in SEK per kWh
+- `frequency` - Grid frequency in Hz (e.g., 50.01)
 - `lastUpdate` - Timestamp of last successful data update
 - `message` - Error or status message (e.g., "No sun", "No current data for grid consumption")
 
@@ -103,6 +110,13 @@ The application runs three background processes alongside the HTTP server:
 - Polls from 1 hour before sunrise until 1 hour after sunset
 - Shows "No sun" message during nighttime
 
+### FFR Process
+- Subscribes to the `ffr_collector` MQTT topic for real-time grid frequency data
+- Parses 4-character payloads (e.g., "5001" → 50.01 Hz)
+- Validates frequency is within expected range (48–52 Hz)
+- Handles high-frequency data (many updates per second) thread-safely
+- The current frequency is included in InfluxDB writes alongside grid power data
+
 ## Configuration
 
 Environment variables (`.env` file):
@@ -150,6 +164,8 @@ SPOTPRICE_REGION=SE4
 │   ├── models/
 │   │   └── data.go              # Data structures
 │   ├── services/
+│   │   ├── ffr/
+│   │   │   └── ffr.go            # MQTT subscriber for grid frequency (FFR)
 │   │   ├── grid/
 │   │   │   └── grid.go          # MQTT subscriber for grid consumption
 │   │   ├── price/
@@ -213,6 +229,7 @@ go test -v ./internal/api
 | `internal/services/solar` | ~46% | SolarEdge client and sunrise/sunset calculations |
 | `internal/services/price` | ~30% | Spot price fetching and matching |
 | `internal/services/grid` | ~19% | MQTT subscription (requires broker for full testing) |
+| `internal/services/ffr` | ~30% | FFR frequency parsing and MQTT subscription |
 | `internal/storage` | ~3% | InfluxDB client (requires database for full testing) |
 | `internal/models` | N/A | Data structures (no executable code) |
 

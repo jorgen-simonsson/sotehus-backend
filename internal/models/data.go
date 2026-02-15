@@ -25,11 +25,19 @@ type SolarData struct {
 	Message    string    `json:"message" example:"No sun"`
 }
 
+// FrequencyData represents current grid frequency from FFR collector
+type FrequencyData struct {
+	Valid      bool      `json:"valid" example:"true"`
+	Frequency  float64   `json:"frequency" example:"50.01"`
+	LastUpdate time.Time `json:"lastUpdate" example:"2025-12-07T16:30:00+01:00"`
+}
+
 // APIResponse represents the combined response for the /api/data endpoint
 type APIResponse struct {
-	Grid  GridData  `json:"grid"`
-	Price PriceData `json:"price"`
-	Solar SolarData `json:"solar"`
+	Grid      GridData      `json:"grid"`
+	Price     PriceData     `json:"price"`
+	Solar     SolarData     `json:"solar"`
+	Frequency FrequencyData `json:"frequency"`
 }
 
 // SpotPriceEntry represents a single price entry from the elprisetjustnu.se API

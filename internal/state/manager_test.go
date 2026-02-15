@@ -31,6 +31,11 @@ func TestNewManager(t *testing.T) {
 	if solar.Valid {
 		t.Error("Initial solar.Valid should be false")
 	}
+
+	frequency := m.GetFrequencyData()
+	if frequency.Valid {
+		t.Error("Initial frequency.Valid should be false")
+	}
 }
 
 func TestUpdateGrid(t *testing.T) {
@@ -143,6 +148,23 @@ func TestUpdateSolarError(t *testing.T) {
 	}
 }
 
+func TestUpdateFrequency(t *testing.T) {
+	m := NewManager()
+
+	m.UpdateFrequency(50.01)
+
+	frequency := m.GetFrequencyData()
+	if !frequency.Valid {
+		t.Error("frequency.Valid should be true after update")
+	}
+	if frequency.Frequency != 50.01 {
+		t.Errorf("frequency.Frequency = %f, want %f", frequency.Frequency, 50.01)
+	}
+	if frequency.LastUpdate.IsZero() {
+		t.Error("frequency.LastUpdate should not be zero")
+	}
+}
+
 func TestGetAPIResponse(t *testing.T) {
 	m := NewManager()
 	timestamp := time.Now()
@@ -150,6 +172,7 @@ func TestGetAPIResponse(t *testing.T) {
 	m.UpdateGrid(100.0, timestamp)
 	m.UpdatePrice(0.89)
 	m.UpdateSolar(200.0)
+	m.UpdateFrequency(50.02)
 
 	response := m.GetAPIResponse()
 
@@ -173,6 +196,13 @@ func TestGetAPIResponse(t *testing.T) {
 	if response.Solar.Power != 200.0 {
 		t.Errorf("response.Solar.Power = %f, want %f", response.Solar.Power, 200.0)
 	}
+
+	if !response.Frequency.Valid {
+		t.Error("response.Frequency.Valid should be true")
+	}
+	if response.Frequency.Frequency != 50.02 {
+		t.Errorf("response.Frequency.Frequency = %f, want %f", response.Frequency.Frequency, 50.02)
+	}
 }
 
 func TestConcurrentAccess(t *testing.T) {
@@ -181,7 +211,7 @@ func TestConcurrentAccess(t *testing.T) {
 
 	// Simulate concurrent reads and writes
 	for i := 0; i < 100; i++ {
-		wg.Add(3)
+		wg.Add(4)
 
 		go func(val float64) {
 			defer wg.Done()
@@ -192,6 +222,11 @@ func TestConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			m.UpdatePrice(val)
 		}(float64(i) / 100)
+
+		go func(val float64) {
+			defer wg.Done()
+			m.UpdateFrequency(50.0 + val/1000)
+		}(float64(i))
 
 		go func() {
 			defer wg.Done()
@@ -208,5 +243,8 @@ func TestConcurrentAccess(t *testing.T) {
 	}
 	if !response.Price.Valid {
 		t.Error("Price should be valid after concurrent updates")
+	}
+	if !response.Frequency.Valid {
+		t.Error("Frequency should be valid after concurrent updates")
 	}
 }
