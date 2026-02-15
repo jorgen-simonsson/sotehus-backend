@@ -1,0 +1,7 @@
+1. Subscribe on topic 'ffr_collector' from the mqtt broker
+2. The payload on the topic consist of a 4 char string like "5001". This represents the current frequency of the grid.
+3. Try to convert this into a decimal number, in this case 50.01, this value will arrive at a high rate
+4. If successfull connvertion store this value as something like 'lastFrequency'
+5. When the normal mqtt values arrives (about every 3-6 second) include this variable in the write to the influxdb bucket
+6. Also include this in the response on the api endpoint reporting price, solar and grid consumption
+7. As the value arrives many times each second, please make sure no race conditions occur

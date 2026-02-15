@@ -11,9 +11,10 @@ import (
 type Manager struct {
 	mu sync.RWMutex
 
-	gridData  models.GridData
-	priceData models.PriceData
-	solarData models.SolarData
+	gridData      models.GridData
+	priceData     models.PriceData
+	solarData     models.SolarData
+	frequencyData models.FrequencyData
 }
 
 // NewManager creates a new state manager with default values
@@ -27,6 +28,9 @@ func NewManager() *Manager {
 			Valid: false,
 		},
 		solarData: models.SolarData{
+			Valid: false,
+		},
+		frequencyData: models.FrequencyData{
 			Valid: false,
 		},
 	}
@@ -102,9 +106,10 @@ func (m *Manager) GetAPIResponse() models.APIResponse {
 	defer m.mu.RUnlock()
 
 	return models.APIResponse{
-		Grid:  m.gridData,
-		Price: m.priceData,
-		Solar: m.solarData,
+		Grid:      m.gridData,
+		Price:     m.priceData,
+		Solar:     m.solarData,
+		Frequency: m.frequencyData,
 	}
 }
 
@@ -127,4 +132,23 @@ func (m *Manager) GetSolarData() models.SolarData {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.solarData
+}
+
+// UpdateFrequency updates the grid frequency data
+func (m *Manager) UpdateFrequency(frequency float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.frequencyData = models.FrequencyData{
+		Valid:      true,
+		Frequency:  frequency,
+		LastUpdate: time.Now(),
+	}
+}
+
+// GetFrequencyData returns a copy of the current frequency data
+func (m *Manager) GetFrequencyData() models.FrequencyData {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.frequencyData
 }

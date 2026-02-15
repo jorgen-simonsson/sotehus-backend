@@ -220,9 +220,16 @@ func (s *Service) onMessage(client mqtt.Client, msg mqtt.Message) {
 	// Update state
 	s.state.UpdateGrid(power, timestamp)
 
-	// Write to InfluxDB
+	// Write to InfluxDB (include current frequency from state)
 	if s.influxDB != nil {
-		if err := s.influxDB.WriteGridPower(power, timestamp); err != nil {
+		// Get current frequency from state (may be zero if FFR service hasn't received data yet)
+		freqData := s.state.GetFrequencyData()
+		var frequency float64
+		if freqData.Valid {
+			frequency = freqData.Frequency
+		}
+
+		if err := s.influxDB.WriteGridPower(power, frequency, timestamp); err != nil {
 			s.logger.Warn("Failed to write grid power to InfluxDB", "error", err)
 		}
 	}

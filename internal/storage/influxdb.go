@@ -42,7 +42,7 @@ func NewInfluxDBClient(cfg *config.Config, logger *slog.Logger) (*InfluxDBClient
 	// Create client with options for basic auth fallback
 	opts := influxdb2.DefaultOptions()
 	opts.SetHTTPRequestTimeout(30)
-	
+
 	client := influxdb2.NewClientWithOptions(url, token, opts)
 
 	// Test connection
@@ -70,11 +70,19 @@ func NewInfluxDBClient(cfg *config.Config, logger *slog.Logger) (*InfluxDBClient
 
 // WriteGridPower writes grid power consumption to InfluxDB
 // Uses "power_monitoring" measurement with "grid_power" field to match Python app
-func (c *InfluxDBClient) WriteGridPower(power float64, timestamp time.Time) error {
+// If frequency is valid (> 0), it will also be included in the point
+func (c *InfluxDBClient) WriteGridPower(power float64, frequency float64, timestamp time.Time) error {
+	fields := map[string]interface{}{"grid_power": power}
+
+	// Include frequency if valid (non-zero)
+	if frequency > 0 {
+		fields["grid_frequency"] = frequency
+	}
+
 	p := influxdb2.NewPoint(
 		"power_monitoring",
 		nil,
-		map[string]interface{}{"grid_power": power},
+		fields,
 		timestamp,
 	)
 
@@ -86,7 +94,11 @@ func (c *InfluxDBClient) WriteGridPower(power float64, timestamp time.Time) erro
 		return err
 	}
 
-	c.logger.Debug("Wrote grid power to InfluxDB", "power", power)
+	if frequency > 0 {
+		c.logger.Debug("Wrote grid power and frequency to InfluxDB", "power", power, "frequency", frequency)
+	} else {
+		c.logger.Debug("Wrote grid power to InfluxDB", "power", power)
+	}
 	return nil
 }
 

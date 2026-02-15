@@ -13,6 +13,7 @@ import (
 
 	"github.com/jorgen-simonsson/sotehus-backend/internal/api"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/config"
+	"github.com/jorgen-simonsson/sotehus-backend/internal/services/ffr"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/services/grid"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/services/price"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/services/solar"
@@ -87,6 +88,25 @@ func main() {
 		}
 	} else {
 		logger.Info("MQTT not configured, grid service disabled")
+	}
+
+	// Start FFR service (MQTT)
+	if cfg.MQTTBrokerHost != "" {
+		ffrService, err := ffr.NewService(cfg, stateManager, logger)
+		if err != nil {
+			logger.Error("Failed to create FFR service", "error", err)
+		} else {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := ffrService.Start(ctx); err != nil {
+					logger.Error("FFR service error", "error", err)
+				}
+			}()
+			logger.Info("FFR service started")
+		}
+	} else {
+		logger.Info("MQTT not configured, FFR service disabled")
 	}
 
 	// Start Price service
