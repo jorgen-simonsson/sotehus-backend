@@ -1,5 +1,47 @@
 basePath: /
 definitions:
+  api.EnergyConsumedResponse:
+    properties:
+      actual_start:
+        example: "2026-02-01T00:01:23+01:00"
+        type: string
+      actual_stop:
+        example: "2026-02-20T23:59:45+01:00"
+        type: string
+      consumed:
+        example: 523.45
+        type: number
+      start:
+        example: "2026-02-01T00:00:00+01:00"
+        type: string
+      stop:
+        example: "2026-02-21T00:00:00+01:00"
+        type: string
+      unit:
+        example: kWh
+        type: string
+    type: object
+  api.EnergySoldResponse:
+    properties:
+      actual_start:
+        example: "2026-02-01T00:01:23+01:00"
+        type: string
+      actual_stop:
+        example: "2026-02-20T23:59:45+01:00"
+        type: string
+      sold:
+        example: 123.45
+        type: number
+      start:
+        example: "2026-02-01T00:00:00+01:00"
+        type: string
+      stop:
+        example: "2026-02-21T00:00:00+01:00"
+        type: string
+      unit:
+        example: kWh
+        type: string
+    type: object
   api.HealthResponse:
     properties:
       status:
@@ -18,14 +60,34 @@ definitions:
         example: 2025-12-07T16:30
         type: string
     type: object
+  api.VersionResponse:
+    properties:
+      version:
+        example: 1.2.0
+        type: string
+    type: object
   models.APIResponse:
     properties:
+      frequency:
+        $ref: '#/definitions/models.FrequencyData'
       grid:
         $ref: '#/definitions/models.GridData'
       price:
         $ref: '#/definitions/models.PriceData'
       solar:
         $ref: '#/definitions/models.SolarData'
+    type: object
+  models.FrequencyData:
+    properties:
+      frequency:
+        example: 50.01
+        type: number
+      lastUpdate:
+        example: "2025-12-07T16:30:00+01:00"
+        type: string
+      valid:
+        example: true
+        type: boolean
     type: object
   models.GridData:
     properties:
@@ -95,6 +157,78 @@ paths:
       summary: Get current energy data
       tags:
       - energy
+  /api/energy/consumed:
+    get:
+      description: Returns the energy consumed in kWh between two timestamps
+      parameters:
+      - description: Start timestamp (RFC3339 format, e.g. 2026-02-01T00:00:00+01:00)
+        in: query
+        name: start
+        required: true
+        type: string
+      - description: Stop timestamp (RFC3339 format, e.g. 2026-02-21T00:00:00+01:00)
+        in: query
+        name: stop
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.EnergyConsumedResponse'
+        "400":
+          description: Invalid start/stop parameter
+          schema:
+            type: string
+        "500":
+          description: Failed to calculate energy consumption
+          schema:
+            type: string
+        "503":
+          description: InfluxDB not configured
+          schema:
+            type: string
+      summary: Get consumed energy for a period
+      tags:
+      - energy
+  /api/energy/sold:
+    get:
+      description: Returns the energy sold in kWh between two timestamps
+      parameters:
+      - description: Start timestamp (RFC3339 format, e.g. 2026-02-01T00:00:00+01:00)
+        in: query
+        name: start
+        required: true
+        type: string
+      - description: Stop timestamp (RFC3339 format, e.g. 2026-02-21T00:00:00+01:00)
+        in: query
+        name: stop
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.EnergySoldResponse'
+        "400":
+          description: Invalid start/stop parameter
+          schema:
+            type: string
+        "500":
+          description: Failed to calculate energy sold
+          schema:
+            type: string
+        "503":
+          description: InfluxDB not configured
+          schema:
+            type: string
+      summary: Get sold energy for a period
+      tags:
+      - energy
   /api/timeseries:
     get:
       description: Returns statistics about the historical data stored in InfluxDB
@@ -116,6 +250,19 @@ paths:
       summary: Get time series statistics
       tags:
       - energy
+  /api/version:
+    get:
+      description: Returns the current version of the API
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.VersionResponse'
+      summary: Get API version
+      tags:
+      - system
   /health:
     get:
       description: Returns the health status of the API

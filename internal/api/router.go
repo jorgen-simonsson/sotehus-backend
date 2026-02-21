@@ -18,6 +18,9 @@ func NewRouter(state *state.Manager, influxDB *storage.InfluxDBClient, logger *s
 	// API routes
 	mux.HandleFunc("GET /api/data", handler.GetData)
 	mux.HandleFunc("GET /api/timeseries", handler.GetTimeSeries)
+	mux.HandleFunc("GET /api/version", handler.GetVersion)
+	mux.HandleFunc("GET /api/energy/consumed", handler.GetEnergyConsumed)
+	mux.HandleFunc("GET /api/energy/sold", handler.GetEnergySold)
 	mux.HandleFunc("GET /health", handler.HealthCheck)
 
 	// Swagger UI

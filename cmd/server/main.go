@@ -71,8 +71,8 @@ func main() {
 	// WaitGroup to track running services
 	var wg sync.WaitGroup
 
-	// Start Grid service (MQTT)
-	if cfg.MQTTBrokerHost != "" && cfg.MQTTTopic != "" {
+	// Start Grid service (MQTT) - topics are defined statically in grid.GridTopics
+	if cfg.MQTTBrokerHost != "" && len(grid.GridTopics) > 0 {
 		gridService, err := grid.NewService(cfg, stateManager, influxDB, logger)
 		if err != nil {
 			logger.Error("Failed to create grid service", "error", err)

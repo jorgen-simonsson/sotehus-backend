@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -17,7 +18,7 @@ type Config struct {
 	MQTTBrokerPort int
 	MQTTUsername   string
 	MQTTPassword   string
-	MQTTTopic      string
+	MQTTTopics     []string
 
 	// InfluxDB configuration
 	InfluxDBHost     string
@@ -50,7 +51,7 @@ func Load() (*Config, error) {
 		MQTTBrokerPort: getEnvAsInt("MQTT_BROKER_PORT", 1883),
 		MQTTUsername:   os.Getenv("MQTT_USERNAME"),
 		MQTTPassword:   os.Getenv("MQTT_PASSWORD"),
-		MQTTTopic:      os.Getenv("MQTT_TOPIC"),
+		MQTTTopics:     parseTopics(os.Getenv("MQTT_TOPIC")),
 
 		// InfluxDB
 		InfluxDBHost:     os.Getenv("INFLUXDB2_HOST"),
@@ -86,4 +87,24 @@ func getEnvAsInt(key string, defaultValue int) int {
 		}
 	}
 	return defaultValue
+}
+
+// parseTopics splits a comma-separated string into a slice of topics
+// It trims whitespace from each topic and removes empty entries
+func parseTopics(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	topics := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			topics = append(topics, p)
+		}
+	}
+	if len(topics) == 0 {
+		return nil
+	}
+	return topics
 }
