@@ -42,6 +42,114 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/energy/consumed": {
+            "get": {
+                "description": "Returns the energy consumed in kWh between two timestamps",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "energy"
+                ],
+                "summary": "Get consumed energy for a period",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Start timestamp (RFC3339 format, e.g. 2026-02-01T00:00:00+01:00)",
+                        "name": "start",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Stop timestamp (RFC3339 format, e.g. 2026-02-21T00:00:00+01:00)",
+                        "name": "stop",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.EnergyConsumedResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid start/stop parameter",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to calculate energy consumption",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "503": {
+                        "description": "InfluxDB not configured",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/energy/sold": {
+            "get": {
+                "description": "Returns the energy sold in kWh between two timestamps",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "energy"
+                ],
+                "summary": "Get sold energy for a period",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Start timestamp (RFC3339 format, e.g. 2026-02-01T00:00:00+01:00)",
+                        "name": "start",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Stop timestamp (RFC3339 format, e.g. 2026-02-21T00:00:00+01:00)",
+                        "name": "stop",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.EnergySoldResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid start/stop parameter",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to calculate energy sold",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "503": {
+                        "description": "InfluxDB not configured",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/timeseries": {
             "get": {
                 "description": "Returns statistics about the historical data stored in InfluxDB",
@@ -74,6 +182,26 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/version": {
+            "get": {
+                "description": "Returns the current version of the API",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Get API version",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.VersionResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
                 "description": "Returns the health status of the API",
@@ -96,6 +224,64 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "api.EnergyConsumedResponse": {
+            "type": "object",
+            "properties": {
+                "actual_start": {
+                    "type": "string",
+                    "example": "2026-02-01T00:01:23+01:00"
+                },
+                "actual_stop": {
+                    "type": "string",
+                    "example": "2026-02-20T23:59:45+01:00"
+                },
+                "consumed": {
+                    "type": "number",
+                    "example": 523.45
+                },
+                "start": {
+                    "type": "string",
+                    "example": "2026-02-01T00:00:00+01:00"
+                },
+                "stop": {
+                    "type": "string",
+                    "example": "2026-02-21T00:00:00+01:00"
+                },
+                "unit": {
+                    "type": "string",
+                    "example": "kWh"
+                }
+            }
+        },
+        "api.EnergySoldResponse": {
+            "type": "object",
+            "properties": {
+                "actual_start": {
+                    "type": "string",
+                    "example": "2026-02-01T00:01:23+01:00"
+                },
+                "actual_stop": {
+                    "type": "string",
+                    "example": "2026-02-20T23:59:45+01:00"
+                },
+                "sold": {
+                    "type": "number",
+                    "example": 123.45
+                },
+                "start": {
+                    "type": "string",
+                    "example": "2026-02-01T00:00:00+01:00"
+                },
+                "stop": {
+                    "type": "string",
+                    "example": "2026-02-21T00:00:00+01:00"
+                },
+                "unit": {
+                    "type": "string",
+                    "example": "kWh"
+                }
+            }
+        },
         "api.HealthResponse": {
             "type": "object",
             "properties": {
@@ -122,9 +308,21 @@ const docTemplate = `{
                 }
             }
         },
+        "api.VersionResponse": {
+            "type": "object",
+            "properties": {
+                "version": {
+                    "type": "string",
+                    "example": "1.2.0"
+                }
+            }
+        },
         "models.APIResponse": {
             "type": "object",
             "properties": {
+                "frequency": {
+                    "$ref": "#/definitions/models.FrequencyData"
+                },
                 "grid": {
                     "$ref": "#/definitions/models.GridData"
                 },
@@ -133,6 +331,23 @@ const docTemplate = `{
                 },
                 "solar": {
                     "$ref": "#/definitions/models.SolarData"
+                }
+            }
+        },
+        "models.FrequencyData": {
+            "type": "object",
+            "properties": {
+                "frequency": {
+                    "type": "number",
+                    "example": 50.01
+                },
+                "lastUpdate": {
+                    "type": "string",
+                    "example": "2025-12-07T16:30:00+01:00"
+                },
+                "valid": {
+                    "type": "boolean",
+                    "example": true
                 }
             }
         },

@@ -77,6 +77,73 @@ Returns statistics about the historical data stored in InfluxDB.
 - `last` - Timestamp of the newest entry in the database (local time)
 - `count` - Total number of grid power entries
 
+### `GET /api/version`
+
+Returns the API version.
+
+**Response:**
+```json
+{
+    "version": "1.2.0"
+}
+```
+
+### `GET /api/energy/consumed`
+
+Returns the energy consumed in kWh between two timestamps.
+
+**Parameters:**
+- `start` - Start timestamp in RFC3339 format (e.g., `2026-02-01T00:00:00+01:00`)
+- `stop` - Stop timestamp in RFC3339 format (e.g., `2026-02-21T00:00:00+01:00`)
+
+**Response:**
+```json
+{
+    "start": "2026-02-01T00:00:00+01:00",
+    "stop": "2026-02-21T00:00:00+01:00",
+    "actual_start": "2026-02-01T00:01:23+01:00",
+    "actual_stop": "2026-02-20T23:59:45+01:00",
+    "consumed": 523.45,
+    "unit": "kWh"
+}
+```
+
+**Field descriptions:**
+- `start` / `stop` - Requested time range
+- `actual_start` / `actual_stop` - Actual timestamps where data was found
+- `consumed` - Energy consumed in kWh (difference between accumulator values)
+
+**Errors:**
+- Returns 500 if no data exists at or before the start or stop timestamp
+
+### `GET /api/energy/sold`
+
+Returns the energy sold (exported to grid) in kWh between two timestamps.
+
+**Parameters:**
+- `start` - Start timestamp in RFC3339 format (e.g., `2026-02-01T00:00:00+01:00`)
+- `stop` - Stop timestamp in RFC3339 format (e.g., `2026-02-21T00:00:00+01:00`)
+
+**Response:**
+```json
+{
+    "start": "2026-02-01T00:00:00+01:00",
+    "stop": "2026-02-21T00:00:00+01:00",
+    "actual_start": "2026-02-01T00:01:23+01:00",
+    "actual_stop": "2026-02-20T23:59:45+01:00",
+    "sold": 123.45,
+    "unit": "kWh"
+}
+```
+
+**Field descriptions:**
+- `start` / `stop` - Requested time range
+- `actual_start` / `actual_stop` - Actual timestamps where data was found
+- `sold` - Energy sold in kWh (difference between accumulator values)
+
+**Errors:**
+- Returns 500 if no data exists at or before the start or stop timestamp
+
 ### `GET /health`
 
 Health check endpoint.
@@ -93,9 +160,28 @@ Health check endpoint.
 The application runs three background processes alongside the HTTP server:
 
 ### Grid Process
-- Subscribes to a local MQTT broker for real-time power consumption
-- Writes each received data point to InfluxDB for historical tracking
+- Subscribes to multiple MQTT topics defined in `GridTopics` for real-time power and energy data
+- Aggregates values from all topics before writing to InfluxDB
+- Waits up to 2 seconds for all topic values to arrive, then writes a single record
+- Logs a warning if timeout occurs before all values are received (incomplete data is still written)
+- Writes each aggregated data point to InfluxDB for historical tracking
 - Marks data as invalid if no MQTT message received for 1 minute
+
+#### Adding New Grid Topics
+
+To add more MQTT topics to the grid data collection, edit the `GridTopics` slice in `internal/services/grid/grid.go`:
+
+```go
+var GridTopics = []TopicMapping{
+    {Topic: "dsmr/reading/powerdelivered_netto", FieldName: "grid_power"},
+    {Topic: "dsmr/reading/electricity_delivered_1", FieldName: "grid_energy_consumed"},
+    {Topic: "dsmr/reading/electricity_returned_1", FieldName: "grid_energy_sold"},
+    // Add new topics here:
+    // {Topic: "dsmr/reading/voltage_l1", FieldName: "grid_voltage_l1"},
+}
+```
+
+Each entry maps an MQTT topic to an InfluxDB field name. All values are aggregated into a single InfluxDB record.
 
 ### Price Process
 - Fetches spot prices from [elprisetjustnu.se](https://www.elprisetjustnu.se) API
@@ -130,7 +216,7 @@ MQTT_BROKER_HOST=your_mqtt_host
 MQTT_BROKER_PORT=1883
 MQTT_USERNAME=your_username
 MQTT_PASSWORD=your_password
-MQTT_TOPIC=your/power/topic
+# Note: Grid topics are defined statically in internal/services/grid/grid.go
 
 # InfluxDB Configuration
 INFLUXDB2_HOST=your_influxdb_host

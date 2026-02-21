@@ -102,6 +102,38 @@ func (c *InfluxDBClient) WriteGridPower(power float64, frequency float64, timest
 	return nil
 }
 
+// WriteGridData writes multiple grid data fields to InfluxDB in a single point.
+// Uses "power_monitoring" measurement with dynamic fields from the provided map.
+// This enables aggregating multiple MQTT topic values into a single InfluxDB record.
+func (c *InfluxDBClient) WriteGridData(data map[string]float64, timestamp time.Time) error {
+	if len(data) == 0 {
+		return nil
+	}
+
+	fields := make(map[string]interface{}, len(data))
+	for k, v := range data {
+		fields[k] = v
+	}
+
+	p := influxdb2.NewPoint(
+		"power_monitoring",
+		nil,
+		fields,
+		timestamp,
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := c.writeAPI.WritePoint(ctx, p); err != nil {
+		c.logger.Error("Failed to write grid data to InfluxDB", "error", err, "fields", len(data))
+		return err
+	}
+
+	c.logger.Debug("Wrote grid data to InfluxDB", "fields", len(data))
+	return nil
+}
+
 // WriteSpotPrice writes spot price to InfluxDB
 // Uses "power_monitoring" measurement with "spot_price" field to match Python app
 func (c *InfluxDBClient) WriteSpotPrice(price float64, timestamp time.Time) error {
@@ -228,6 +260,89 @@ func (c *InfluxDBClient) GetTimeSeriesStats() (*TimeSeriesStats, error) {
 	}
 
 	return stats, nil
+}
+
+// GetLastValueBefore returns the last value of a field at or before the given timestamp.
+func (c *InfluxDBClient) GetLastValueBefore(fieldName string, targetTime time.Time) (float64, time.Time, error) {
+	queryAPI := c.client.QueryAPI(c.org)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Query to find the last value at or before the target time
+	// We use range from epoch start to just after target time, then get last
+	query := fmt.Sprintf(`
+		from(bucket: "%s")
+		|> range(start: 0, stop: %s)
+		|> filter(fn: (r) => r._measurement == "power_monitoring")
+		|> filter(fn: (r) => r._field == "%s")
+		|> last()
+	`, c.bucket, targetTime.Add(time.Second).Format(time.RFC3339), fieldName)
+
+	result, err := queryAPI.Query(ctx, query)
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("failed to query last value before: %w", err)
+	}
+
+	var value float64
+	var actualTime time.Time
+	found := false
+
+	for result.Next() {
+		record := result.Record()
+		if v, ok := record.Value().(float64); ok {
+			value = v
+			actualTime = record.Time()
+			found = true
+		}
+	}
+	if result.Err() != nil {
+		return 0, time.Time{}, fmt.Errorf("error reading last value result: %w", result.Err())
+	}
+
+	if !found {
+		return 0, time.Time{}, fmt.Errorf("no data found at or before %v", targetTime)
+	}
+
+	return value, actualTime, nil
+}
+
+// GetConsumedEnergy calculates the energy consumed between two timestamps.
+// It finds the last grid_enery_consumed_ack value at or before start and stop,
+// and returns the difference in kWh. Returns an error if no data exists
+// at or before either timestamp.
+func (c *InfluxDBClient) GetConsumedEnergy(start, stop time.Time) (float64, time.Time, time.Time, error) {
+	startValue, startActual, err := c.GetLastValueBefore("grid_enery_consumed_ack", start)
+	if err != nil {
+		return 0, time.Time{}, time.Time{}, fmt.Errorf("no data found at or before start time %v", start)
+	}
+
+	stopValue, stopActual, err := c.GetLastValueBefore("grid_enery_consumed_ack", stop)
+	if err != nil {
+		return 0, time.Time{}, time.Time{}, fmt.Errorf("no data found at or before stop time %v", stop)
+	}
+
+	consumed := stopValue - startValue
+	return consumed, startActual, stopActual, nil
+}
+
+// GetSoldEnergy calculates the energy sold between two timestamps.
+// It finds the last grid_enery_sold_ack value at or before start and stop,
+// and returns the difference in kWh. Returns an error if no data exists
+// at or before either timestamp.
+func (c *InfluxDBClient) GetSoldEnergy(start, stop time.Time) (float64, time.Time, time.Time, error) {
+	startValue, startActual, err := c.GetLastValueBefore("grid_enery_sold_ack", start)
+	if err != nil {
+		return 0, time.Time{}, time.Time{}, fmt.Errorf("no data found at or before start time %v", start)
+	}
+
+	stopValue, stopActual, err := c.GetLastValueBefore("grid_enery_sold_ack", stop)
+	if err != nil {
+		return 0, time.Time{}, time.Time{}, fmt.Errorf("no data found at or before stop time %v", stop)
+	}
+
+	sold := stopValue - startValue
+	return sold, startActual, stopActual, nil
 }
 
 // Close closes the InfluxDB client connection

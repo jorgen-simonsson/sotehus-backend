@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,13 +22,26 @@ const (
 	keepAliveInterval     = 30 * time.Second // MQTT keep-alive ping interval
 	pingTimeout           = 10 * time.Second // Timeout for keep-alive ping response
 	connectTimeout        = 30 * time.Second // Timeout for initial connection
-	maxReconnectAttempts  = 0                // 0 = unlimited reconnect attempts
+	aggregationTimeout    = 2 * time.Second  // Time to wait for all topic values before writing to InfluxDB
 )
+
+// TopicMapping defines an MQTT topic and its corresponding InfluxDB field name
+type TopicMapping struct {
+	Topic     string
+	FieldName string
+}
+
+// GridTopics defines the static list of MQTT topics to subscribe to and their InfluxDB field names.
+// Add new topics here to include them in the aggregated InfluxDB write.
+var GridTopics = []TopicMapping{
+	{Topic: "dsmr/reading/powerdelivered_netto", FieldName: "grid_power"},
+	{Topic: "dsmr/reading/electricity_delivered_1", FieldName: "grid_enery_consumed_ack"},
+	{Topic: "dsmr/reading/electricity_returned_1", FieldName: "grid_enery_sold_ack"},
+}
 
 // Service handles grid power consumption via MQTT
 type Service struct {
 	client          mqtt.Client
-	topic           string
 	brokerURL       string
 	state           *state.Manager
 	influxDB        *storage.InfluxDBClient
@@ -36,6 +50,13 @@ type Service struct {
 	lastMessageMu   sync.RWMutex
 	reconnectCount  int
 	reconnectMu     sync.Mutex
+
+	// Aggregation fields
+	pendingValues    map[string]float64
+	pendingMu        sync.Mutex
+	aggregationTimer *time.Timer
+	batchTimestamp   time.Time
+	topicToField     map[string]string // maps topic -> fieldName for quick lookup
 }
 
 // NewService creates a new grid service
@@ -43,18 +64,25 @@ func NewService(cfg *config.Config, state *state.Manager, influxDB *storage.Infl
 	if cfg.MQTTBrokerHost == "" {
 		return nil, fmt.Errorf("MQTT broker host is required")
 	}
-	if cfg.MQTTTopic == "" {
-		return nil, fmt.Errorf("MQTT topic is required")
+	if len(GridTopics) == 0 {
+		return nil, fmt.Errorf("no MQTT topics configured in GridTopics")
 	}
 
 	brokerURL := fmt.Sprintf("tcp://%s:%d", cfg.MQTTBrokerHost, cfg.MQTTBrokerPort)
 
+	// Build topic-to-field lookup map
+	topicToField := make(map[string]string, len(GridTopics))
+	for _, tm := range GridTopics {
+		topicToField[tm.Topic] = tm.FieldName
+	}
+
 	s := &Service{
-		topic:     cfg.MQTTTopic,
-		brokerURL: brokerURL,
-		state:     state,
-		influxDB:  influxDB,
-		logger:    logger,
+		brokerURL:     brokerURL,
+		state:         state,
+		influxDB:      influxDB,
+		logger:        logger,
+		pendingValues: make(map[string]float64),
+		topicToField:  topicToField,
 	}
 
 	opts := mqtt.NewClientOptions().
@@ -91,7 +119,8 @@ func NewService(cfg *config.Config, state *state.Manager, influxDB *storage.Infl
 
 // Start connects to MQTT and starts receiving grid power data
 func (s *Service) Start(ctx context.Context) error {
-	s.logger.Info("Connecting to MQTT broker...", "broker", s.brokerURL, "topic", s.topic)
+	topicNames := s.getTopicNames()
+	s.logger.Info("Connecting to MQTT broker...", "broker", s.brokerURL, "topics", strings.Join(topicNames, ", "))
 
 	token := s.client.Connect()
 	if token.WaitTimeout(connectTimeout) && token.Error() != nil {
@@ -160,16 +189,23 @@ func (s *Service) onConnect(client mqtt.Client) {
 	s.reconnectCount = 0
 	s.reconnectMu.Unlock()
 
-	s.logger.Info("Connected to MQTT broker, subscribing to topic", "topic", s.topic, "broker", s.brokerURL)
+	topicNames := s.getTopicNames()
+	s.logger.Info("Connected to MQTT broker, subscribing to topics", "topics", strings.Join(topicNames, ", "), "broker", s.brokerURL)
 
-	token := client.Subscribe(s.topic, 1, s.onMessage)
+	// Build subscription map with QoS 1 for all topics
+	filters := make(map[string]byte, len(GridTopics))
+	for _, tm := range GridTopics {
+		filters[tm.Topic] = 1
+	}
+
+	token := client.SubscribeMultiple(filters, s.onMessage)
 	if token.Wait() && token.Error() != nil {
-		s.logger.Error("Failed to subscribe to topic", "topic", s.topic, "error", token.Error())
+		s.logger.Error("Failed to subscribe to topics", "topics", strings.Join(topicNames, ", "), "error", token.Error())
 		s.state.UpdateGridError("Failed to subscribe to MQTT topic")
 		return
 	}
 
-	s.logger.Info("Subscribed to MQTT topic", "topic", s.topic)
+	s.logger.Info("Subscribed to MQTT topics", "topics", strings.Join(topicNames, ", "))
 }
 
 func (s *Service) onConnectionLost(client mqtt.Client, err error) {
@@ -188,28 +224,49 @@ func (s *Service) onReconnecting(client mqtt.Client, opts *mqtt.ClientOptions) {
 }
 
 func (s *Service) onMessage(client mqtt.Client, msg mqtt.Message) {
+	topic := msg.Topic()
 	payload := msg.Payload()
 
-	// Try to parse as JSON first
-	var power float64
-
-	// Try JSON format: {"power": 123.45}
-	var jsonPayload struct {
-		Power float64 `json:"power"`
+	// Look up the field name for this topic
+	fieldName, ok := s.topicToField[topic]
+	if !ok {
+		s.logger.Warn("Received message for unknown topic", "topic", topic)
+		return
 	}
+
+	// Parse the value from payload
+	var value float64
+	// Try JSON format first: {"value": 123.45} or {"power": 123.45}
+	var jsonPayload map[string]interface{}
 	if err := json.Unmarshal(payload, &jsonPayload); err == nil {
-		power = jsonPayload.Power
+		// Try common field names
+		for _, key := range []string{"value", "power", "Value", "Power"} {
+			if v, exists := jsonPayload[key]; exists {
+				if f, ok := v.(float64); ok {
+					value = f
+					break
+				}
+			}
+		}
+		// If no known key found, try to use the first numeric value
+		if value == 0 {
+			for _, v := range jsonPayload {
+				if f, ok := v.(float64); ok {
+					value = f
+					break
+				}
+			}
+		}
 	} else {
 		// Try plain number format
-		if _, err := fmt.Sscanf(string(payload), "%f", &power); err != nil {
-			s.logger.Warn("Failed to parse MQTT payload", "payload", string(payload), "error", err)
+		if _, err := fmt.Sscanf(string(payload), "%f", &value); err != nil {
+			s.logger.Warn("Failed to parse MQTT payload", "topic", topic, "payload", string(payload), "error", err)
 			return
 		}
 	}
 
-	s.logger.Debug("Received grid power", "power", power)
+	s.logger.Debug("Received grid data", "topic", topic, "field", fieldName, "value", value)
 
-	// Use same timestamp for state update and InfluxDB write
 	timestamp := time.Now()
 
 	// Update last message time
@@ -217,20 +274,98 @@ func (s *Service) onMessage(client mqtt.Client, msg mqtt.Message) {
 	s.lastMessageTime = timestamp
 	s.lastMessageMu.Unlock()
 
-	// Update state
-	s.state.UpdateGrid(power, timestamp)
+	// Add value to pending batch
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
 
-	// Write to InfluxDB (include current frequency from state)
-	if s.influxDB != nil {
-		// Get current frequency from state (may be zero if FFR service hasn't received data yet)
-		freqData := s.state.GetFrequencyData()
-		var frequency float64
-		if freqData.Valid {
-			frequency = freqData.Frequency
-		}
+	// If this is the first value in a new batch, record the timestamp and start timer
+	if len(s.pendingValues) == 0 {
+		s.batchTimestamp = timestamp
+		s.aggregationTimer = time.AfterFunc(aggregationTimeout, s.onAggregationTimeout)
+	}
 
-		if err := s.influxDB.WriteGridPower(power, frequency, timestamp); err != nil {
-			s.logger.Warn("Failed to write grid power to InfluxDB", "error", err)
+	s.pendingValues[fieldName] = value
+
+	// Update state with grid power if that's what we received
+	if fieldName == "grid_power" {
+		s.state.UpdateGrid(value, timestamp)
+	}
+
+	// Check if we have all values
+	if s.allValuesReceived() {
+		s.flushToInfluxLocked()
+	}
+}
+
+// getTopicNames returns a slice of topic names from GridTopics
+func (s *Service) getTopicNames() []string {
+	names := make([]string, len(GridTopics))
+	for i, tm := range GridTopics {
+		names[i] = tm.Topic
+	}
+	return names
+}
+
+// allValuesReceived checks if all expected topic values have been received
+func (s *Service) allValuesReceived() bool {
+	return len(s.pendingValues) >= len(GridTopics)
+}
+
+// onAggregationTimeout is called when the timeout expires before all values are received
+func (s *Service) onAggregationTimeout() {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+
+	if len(s.pendingValues) == 0 {
+		return
+	}
+
+	// Log warning about missing values
+	var missing []string
+	for _, tm := range GridTopics {
+		if _, ok := s.pendingValues[tm.FieldName]; !ok {
+			missing = append(missing, tm.FieldName)
 		}
 	}
+	s.logger.Warn("Aggregation timeout - writing incomplete data to InfluxDB",
+		"received", len(s.pendingValues),
+		"expected", len(GridTopics),
+		"missing", strings.Join(missing, ", "))
+
+	s.flushToInfluxLocked()
+}
+
+// flushToInfluxLocked writes pending values to InfluxDB and resets the batch.
+// Must be called with pendingMu held.
+func (s *Service) flushToInfluxLocked() {
+	if s.aggregationTimer != nil {
+		s.aggregationTimer.Stop()
+		s.aggregationTimer = nil
+	}
+
+	if s.influxDB == nil || len(s.pendingValues) == 0 {
+		s.pendingValues = make(map[string]float64)
+		return
+	}
+
+	// Get current frequency from state to include in the write
+	freqData := s.state.GetFrequencyData()
+	if freqData.Valid && freqData.Frequency > 0 {
+		s.pendingValues["grid_frequency"] = freqData.Frequency
+	}
+
+	// Create a copy for the write
+	fields := make(map[string]float64, len(s.pendingValues))
+	for k, v := range s.pendingValues {
+		fields[k] = v
+	}
+
+	s.logger.Debug("Writing aggregated data to InfluxDB", "fields", len(fields))
+
+	if err := s.influxDB.WriteGridData(fields, s.batchTimestamp); err != nil {
+		s.logger.Warn("Failed to write grid data to InfluxDB", "error", err)
+	}
+
+	// Reset pending values for next batch
+	s.pendingValues = make(map[string]float64)
 }

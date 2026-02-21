@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"reflect"
 	"testing"
 )
 
@@ -72,7 +73,6 @@ func TestLoadWithEnvVars(t *testing.T) {
 		{"MQTTBrokerPort", cfg.MQTTBrokerPort, 1884},
 		{"MQTTUsername", cfg.MQTTUsername, "testuser"},
 		{"MQTTPassword", cfg.MQTTPassword, "testpass"},
-		{"MQTTTopic", cfg.MQTTTopic, "test/topic"},
 		{"InfluxDBHost", cfg.InfluxDBHost, "influx.example.com"},
 		{"InfluxDBPort", cfg.InfluxDBPort, 8087},
 		{"InfluxDBUser", cfg.InfluxDBUser, "admin"},
@@ -89,6 +89,12 @@ func TestLoadWithEnvVars(t *testing.T) {
 		if tt.got != tt.want {
 			t.Errorf("%s = %v, want %v", tt.name, tt.got, tt.want)
 		}
+	}
+
+	// Test MQTTTopics separately since it's a slice
+	expectedTopics := []string{"test/topic"}
+	if !reflect.DeepEqual(cfg.MQTTTopics, expectedTopics) {
+		t.Errorf("MQTTTopics = %v, want %v", cfg.MQTTTopics, expectedTopics)
 	}
 }
 
