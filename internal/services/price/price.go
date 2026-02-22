@@ -11,7 +11,6 @@ import (
 	"github.com/jorgen-simonsson/sotehus-backend/internal/config"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/models"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/state"
-	"github.com/jorgen-simonsson/sotehus-backend/internal/storage"
 )
 
 const (
@@ -21,20 +20,18 @@ const (
 
 // Service handles fetching spot prices from elprisetjustnu.se
 type Service struct {
-	region   string
-	state    *state.Manager
-	influxDB *storage.InfluxDBClient
-	logger   *slog.Logger
-	client   *http.Client
+	region string
+	state  *state.Manager
+	logger *slog.Logger
+	client *http.Client
 }
 
 // NewService creates a new price service
-func NewService(cfg *config.Config, state *state.Manager, influxDB *storage.InfluxDBClient, logger *slog.Logger) *Service {
+func NewService(cfg *config.Config, state *state.Manager, logger *slog.Logger) *Service {
 	return &Service{
-		region:   cfg.SpotPriceRegion,
-		state:    state,
-		influxDB: influxDB,
-		logger:   logger,
+		region: cfg.SpotPriceRegion,
+		state:  state,
+		logger: logger,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -79,13 +76,6 @@ func (s *Service) fetchAndUpdate() {
 
 	s.logger.Info("Updated spot price", "price", currentPrice, "region", s.region)
 	s.state.UpdatePrice(currentPrice)
-
-	// Write to InfluxDB
-	if s.influxDB != nil {
-		if err := s.influxDB.WriteSpotPrice(currentPrice, time.Now()); err != nil {
-			s.logger.Warn("Failed to write spot price to InfluxDB", "error", err)
-		}
-	}
 }
 
 func (s *Service) fetchPrices() ([]models.SpotPriceEntry, error) {

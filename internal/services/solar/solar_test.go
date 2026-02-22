@@ -19,7 +19,7 @@ func TestNewServiceMissingAPIKey(t *testing.T) {
 		SolarEdgeSiteID: "12345",
 	}
 
-	service, err := NewService(cfg, mgr, nil, logger)
+	service, err := NewService(cfg, mgr, logger)
 
 	if err == nil {
 		t.Error("Expected error for missing API key")
@@ -41,7 +41,7 @@ func TestNewServiceMissingSiteID(t *testing.T) {
 		SolarEdgeSiteID: "",
 	}
 
-	service, err := NewService(cfg, mgr, nil, logger)
+	service, err := NewService(cfg, mgr, logger)
 
 	if err == nil {
 		t.Error("Expected error for missing site ID")
@@ -63,7 +63,7 @@ func TestNewServiceSuccess(t *testing.T) {
 		SolarEdgeSiteID: "12345",
 	}
 
-	service, err := NewService(cfg, mgr, nil, logger)
+	service, err := NewService(cfg, mgr, logger)
 
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -88,7 +88,7 @@ func TestCalculateSunriseSunsetSummer(t *testing.T) {
 		SolarEdgeSiteID: "12345",
 	}
 
-	service, _ := NewService(cfg, mgr, nil, logger)
+	service, _ := NewService(cfg, mgr, logger)
 
 	// Test midsummer (June 21)
 	date := time.Date(2025, 6, 21, 12, 0, 0, 0, time.Local)
@@ -120,7 +120,7 @@ func TestCalculateSunriseSunsetWinter(t *testing.T) {
 		SolarEdgeSiteID: "12345",
 	}
 
-	service, _ := NewService(cfg, mgr, nil, logger)
+	service, _ := NewService(cfg, mgr, logger)
 
 	// Test midwinter (December 21)
 	date := time.Date(2025, 12, 21, 12, 0, 0, 0, time.Local)
@@ -152,7 +152,7 @@ func TestIsSunUpMidday(t *testing.T) {
 		SolarEdgeSiteID: "12345",
 	}
 
-	service, _ := NewService(cfg, mgr, nil, logger)
+	service, _ := NewService(cfg, mgr, logger)
 
 	// Test at noon - should always be considered sun up (in Stockholm at least)
 	// This tests the logic but uses current time
@@ -171,7 +171,7 @@ func TestCalculateUpdateInterval(t *testing.T) {
 		SolarEdgeSiteID: "12345",
 	}
 
-	service, _ := NewService(cfg, mgr, nil, logger)
+	service, _ := NewService(cfg, mgr, logger)
 
 	interval := service.calculateUpdateInterval()
 

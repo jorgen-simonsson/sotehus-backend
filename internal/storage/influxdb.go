@@ -9,6 +9,7 @@ import (
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/influxdata/influxdb-client-go/v2/api"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/config"
+	"github.com/shopspring/decimal"
 )
 
 // InfluxDBClient handles writing time series data to InfluxDB
@@ -131,50 +132,6 @@ func (c *InfluxDBClient) WriteGridData(data map[string]float64, timestamp time.T
 	}
 
 	c.logger.Debug("Wrote grid data to InfluxDB", "fields", len(data))
-	return nil
-}
-
-// WriteSpotPrice writes spot price to InfluxDB
-// Uses "power_monitoring" measurement with "spot_price" field to match Python app
-func (c *InfluxDBClient) WriteSpotPrice(price float64, timestamp time.Time) error {
-	p := influxdb2.NewPoint(
-		"power_monitoring",
-		nil,
-		map[string]interface{}{"spot_price": price},
-		timestamp,
-	)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := c.writeAPI.WritePoint(ctx, p); err != nil {
-		c.logger.Error("Failed to write spot price to InfluxDB", "error", err)
-		return err
-	}
-
-	c.logger.Debug("Wrote spot price to InfluxDB", "price", price)
-	return nil
-}
-
-// WriteSolarPower writes solar power production to InfluxDB
-// Uses "power_monitoring" measurement with "solar_production" field to match Python app
-func (c *InfluxDBClient) WriteSolarPower(power float64, timestamp time.Time) error {
-	p := influxdb2.NewPoint(
-		"power_monitoring",
-		nil,
-		map[string]interface{}{"solar_production": power},
-		timestamp,
-	)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := c.writeAPI.WritePoint(ctx, p); err != nil {
-		c.logger.Error("Failed to write solar power to InfluxDB", "error", err)
-		return err
-	}
-
-	c.logger.Debug("Wrote solar power to InfluxDB", "power", power)
 	return nil
 }
 
@@ -348,4 +305,63 @@ func (c *InfluxDBClient) GetSoldEnergy(start, stop time.Time) (float64, time.Tim
 // Close closes the InfluxDB client connection
 func (c *InfluxDBClient) Close() {
 	c.client.Close()
+}
+
+// TimeFieldRecord represents a single InfluxDB record with spot_price and grid_enery_consumed_ack fields.
+type TimeFieldRecord struct {
+	Time        time.Time       `json:"time"`
+	SpotPrice   decimal.Decimal `json:"spot_price"`
+	ConsumedAck decimal.Decimal `json:"consumed_ack"`
+}
+
+// GetFieldsInRange returns time-ordered records with spot_price and grid_enery_consumed_ack
+// for the given time range. Uses Flux pivot to combine both fields into single rows,
+// and fill(usePrevious: true) to carry forward the last known spot_price when missing.
+func (c *InfluxDBClient) GetFieldsInRange(start, stop time.Time) ([]TimeFieldRecord, error) {
+	queryAPI := c.client.QueryAPI(c.org)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Query both fields, fill forward missing spot_price, pivot into rows, sort by time
+	query := fmt.Sprintf(`
+		from(bucket: "%s")
+		|> range(start: %s, stop: %s)
+		|> filter(fn: (r) => r._measurement == "power_monitoring")
+		|> filter(fn: (r) => r._field == "spot_price" or r._field == "grid_enery_consumed_ack")
+		|> fill(usePrevious: true)
+		|> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+		|> filter(fn: (r) => exists r.grid_enery_consumed_ack and exists r.spot_price)
+		|> sort(columns: ["_time"])
+	`, c.bucket, start.Format(time.RFC3339), stop.Format(time.RFC3339))
+
+	result, err := queryAPI.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query fields in range: %w", err)
+	}
+
+	var records []TimeFieldRecord
+	for result.Next() {
+		record := result.Record()
+
+		var spotPrice, consumedAck decimal.Decimal
+
+		if v, ok := record.ValueByKey("spot_price").(float64); ok {
+			spotPrice = decimal.NewFromFloat(v)
+		}
+		if v, ok := record.ValueByKey("grid_enery_consumed_ack").(float64); ok {
+			consumedAck = decimal.NewFromFloat(v)
+		}
+
+		records = append(records, TimeFieldRecord{
+			Time:        record.Time(),
+			SpotPrice:   spotPrice,
+			ConsumedAck: consumedAck,
+		})
+	}
+	if result.Err() != nil {
+		return nil, fmt.Errorf("error reading fields in range result: %w", result.Err())
+	}
+
+	return records, nil
 }

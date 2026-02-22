@@ -35,6 +35,9 @@ type Config struct {
 
 	// Spot price configuration
 	SpotPriceRegion string
+
+	// SQLite configuration
+	SQLiteDBPath string
 }
 
 // Load loads configuration from environment variables
@@ -68,6 +71,9 @@ func Load() (*Config, error) {
 
 		// Spot price
 		SpotPriceRegion: getEnvOrDefault("SPOTPRICE_REGION", "SE4"),
+
+		// SQLite
+		SQLiteDBPath: getEnvOrDefault("SQLITE_DB_PATH", "./data/params.db"),
 	}
 
 	return cfg, nil

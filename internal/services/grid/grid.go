@@ -354,6 +354,18 @@ func (s *Service) flushToInfluxLocked() {
 		s.pendingValues["grid_frequency"] = freqData.Frequency
 	}
 
+	// Get current spot price from state to include in the write
+	priceData := s.state.GetPriceData()
+	if priceData.Valid {
+		s.pendingValues["spot_price"] = priceData.Price
+	}
+
+	// Get current solar production from state to include in the write
+	solarData := s.state.GetSolarData()
+	if solarData.Valid {
+		s.pendingValues["solar_production"] = solarData.Power
+	}
+
 	// Create a copy for the write
 	fields := make(map[string]float64, len(s.pendingValues))
 	for k, v := range s.pendingValues {

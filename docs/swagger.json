@@ -89,6 +89,60 @@
                 }
             }
         },
+        "/api/energy/cost": {
+            "get": {
+                "description": "Calculates the actual energy cost for a period, accounting for changing spot prices.\nGroups records into blocks of constant spot price, computes per-block kWh and cost,\nadds configured price components (transfer, energy tax, dynamic and static additions),\nand applies VAT.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "energy"
+                ],
+                "summary": "Get energy cost for a period",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Start timestamp (RFC3339 format, e.g. 2026-02-01T00:00:00+01:00)",
+                        "name": "start",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Stop timestamp (RFC3339 format, e.g. 2026-02-21T00:00:00+01:00)",
+                        "name": "stop",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.EnergyCostResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid start/stop parameter",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to calculate energy cost",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "503": {
+                        "description": "InfluxDB not configured",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/energy/sold": {
             "get": {
                 "description": "Returns the energy sold in kWh between two timestamps",
@@ -136,6 +190,183 @@
                     },
                     "503": {
                         "description": "InfluxDB not configured",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/params": {
+            "get": {
+                "description": "Returns all persistent configuration parameters",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "parameters"
+                ],
+                "summary": "Get all persistent parameters",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/params.PersistentParam"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to get parameters",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Creates a new persistent parameter. Returns 409 if the key already exists.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "parameters"
+                ],
+                "summary": "Create a new parameter",
+                "parameters": [
+                    {
+                        "description": "Parameter to create",
+                        "name": "param",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/params.CreateParamRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/params.PersistentParam"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "409": {
+                        "description": "Parameter with this key already exists",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to create parameter",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/params/{key}": {
+            "get": {
+                "description": "Returns a single persistent parameter by its key",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "parameters"
+                ],
+                "summary": "Get a parameter by key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Parameter key",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/params.PersistentParam"
+                        }
+                    },
+                    "404": {
+                        "description": "Parameter not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to get parameter",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "Updates the description and content of a parameter identified by key",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "parameters"
+                ],
+                "summary": "Update an existing parameter",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Parameter key",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Updated parameter data",
+                        "name": "param",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/params.UpdateParamRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/params.PersistentParam"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Parameter not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to update parameter",
                         "schema": {
                             "type": "string"
                         }
@@ -243,6 +474,78 @@
                 "unit": {
                     "type": "string",
                     "example": "kWh"
+                }
+            }
+        },
+        "api.EnergyCostBlock": {
+            "type": "object",
+            "properties": {
+                "added_prices": {
+                    "type": "number",
+                    "example": 0.7
+                },
+                "consumed_kwh": {
+                    "type": "number",
+                    "example": 12.34
+                },
+                "cost": {
+                    "type": "number",
+                    "example": 14.22
+                },
+                "spot_price": {
+                    "type": "number",
+                    "example": 0.45
+                },
+                "start": {
+                    "type": "string",
+                    "example": "2026-02-22T00:00:00+01:00"
+                },
+                "stop": {
+                    "type": "string",
+                    "example": "2026-02-22T01:00:00+01:00"
+                },
+                "total_price": {
+                    "type": "number",
+                    "example": 1.15
+                }
+            }
+        },
+        "api.EnergyCostResponse": {
+            "type": "object",
+            "properties": {
+                "blocks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.EnergyCostBlock"
+                    }
+                },
+                "cost_before_vat": {
+                    "type": "number",
+                    "example": 180.73
+                },
+                "period_start": {
+                    "type": "string",
+                    "example": "2026-02-22T00:00:00+01:00"
+                },
+                "period_stop": {
+                    "type": "string",
+                    "example": "2026-02-22T12:00:00+01:00"
+                },
+                "total_consumed_kwh": {
+                    "type": "number",
+                    "example": 156.78
+                },
+                "total_cost": {
+                    "type": "number",
+                    "example": 225.91
+                },
+                "unit": {
+                    "type": "string",
+                    "example": "SEK"
+                },
+                "vat_percent": {
+                    "type": "number",
+                    "example": 25
                 }
             }
         },
@@ -400,6 +703,61 @@
                 "valid": {
                     "type": "boolean",
                     "example": false
+                }
+            }
+        },
+        "params.CreateParamRequest": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "example": "{\"value\": 0.04}"
+                },
+                "description": {
+                    "type": "string",
+                    "example": "Dynamic addition to price"
+                },
+                "key": {
+                    "type": "string",
+                    "example": "DynamicAddPrice"
+                }
+            }
+        },
+        "params.PersistentParam": {
+            "type": "object",
+            "properties": {
+                "changed": {
+                    "type": "string",
+                    "example": "2026-01-15T10:30:00+01:00"
+                },
+                "content": {
+                    "type": "string",
+                    "example": "{\"value\": 0.04}"
+                },
+                "description": {
+                    "type": "string",
+                    "example": "Dynamic addition to price"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "key": {
+                    "type": "string",
+                    "example": "DynamicAddPrice"
+                }
+            }
+        },
+        "params.UpdateParamRequest": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "example": "{\"value\": 0.05}"
+                },
+                "description": {
+                    "type": "string",
+                    "example": "Dynamic addition to price"
                 }
             }
         }
