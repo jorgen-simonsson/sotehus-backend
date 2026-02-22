@@ -29,6 +29,7 @@ A Go application that provides real-time energy monitoring data via a REST API.
 - [Project Structure](#project-structure)
 - [Building and Running](#building-and-running)
 - [Testing](#testing)
+- [Changelog](#changelog)
 
 ## Overview
 
@@ -407,7 +408,8 @@ SQLITE_DB_PATH=./data/params.db
 ├── internal/
 │   ├── api/
 │   │   ├── handler.go           # HTTP handlers
-│   │   └── router.go            # Route definitions
+│   │   ├── router.go            # Route definitions
+│   │   └── version.go           # API version constant and endpoint
 │   ├── config/
 │   │   └── config.go            # Environment configuration
 │   ├── models/
@@ -506,3 +508,15 @@ go test -v ./internal/storage/params
 | `internal/models` | N/A | Data structures (no executable code) |
 
 Note: Some packages have lower coverage because they require external services (MQTT broker, InfluxDB, HTTP APIs) for complete integration testing.
+
+## Changelog
+
+### 2026-02-22 Ver 1.3.0
+- Added persistent parameter store backed by SQLite (`internal/storage/params/`)
+- New endpoints: `GET /api/params`, `GET /api/params/{key}`, `POST /api/params`, `PUT /api/params/{key}`
+- Default parameters seeded on startup (`DynamicAddPrice`, `StaticAddPrice`)
+- Added `SQLITE_DB_PATH` configuration option (default: `./data/params.db`)
+- Docker volume mount (`./data:/app/data`) for SQLite persistence
+- Integration and unit tests for parameter handling
+- Updated Swagger documentation with parameter endpoints
+- Reconstructed README with table of contents

@@ -12,9 +12,6 @@ import (
 	"github.com/jorgen-simonsson/sotehus-backend/internal/storage/params"
 )
 
-// APIVersion is the current version of the API
-const APIVersion = "1.2.0"
-
 // Handler holds HTTP handlers
 type Handler struct {
 	state       *state.Manager
@@ -58,11 +55,6 @@ type HealthResponse struct {
 	Status string `json:"status" example:"ok"`
 }
 
-// VersionResponse represents the version response
-type VersionResponse struct {
-	Version string `json:"version" example:"1.2.0"`
-}
-
 // HealthCheck handles GET /health requests
 // @Summary Health check
 // @Description Returns the health status of the API
@@ -74,19 +66,6 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
-}
-
-// GetVersion handles GET /api/version requests
-// @Summary Get API version
-// @Description Returns the current version of the API
-// @Tags system
-// @Produce json
-// @Success 200 {object} VersionResponse
-// @Router /api/version [get]
-func (h *Handler) GetVersion(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(VersionResponse{Version: APIVersion})
 }
 
 // TimeSeriesResponse represents the response for /api/timeseries
