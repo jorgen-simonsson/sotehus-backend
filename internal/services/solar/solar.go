@@ -12,31 +12,29 @@ import (
 	"github.com/jorgen-simonsson/sotehus-backend/internal/config"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/models"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/state"
-	"github.com/jorgen-simonsson/sotehus-backend/internal/storage"
 )
 
 const (
-	baseURL           = "https://monitoringapi.solaredge.com"
-	maxDailyCalls     = 300
-	usagePercent      = 0.9
-	minIntervalMins   = 5
-	stockholmLat      = 59.3293
-	stockholmLon      = 18.0686
-	nightBufferHours  = 1 // Don't poll 1 hour before sunrise or after sunset
+	baseURL          = "https://monitoringapi.solaredge.com"
+	maxDailyCalls    = 300
+	usagePercent     = 0.9
+	minIntervalMins  = 5
+	stockholmLat     = 59.3293
+	stockholmLon     = 18.0686
+	nightBufferHours = 1 // Don't poll 1 hour before sunrise or after sunset
 )
 
 // Service handles fetching solar production from SolarEdge API
 type Service struct {
-	apiKey   string
-	siteID   string
-	state    *state.Manager
-	influxDB *storage.InfluxDBClient
-	logger   *slog.Logger
-	client   *http.Client
+	apiKey string
+	siteID string
+	state  *state.Manager
+	logger *slog.Logger
+	client *http.Client
 }
 
 // NewService creates a new solar service
-func NewService(cfg *config.Config, state *state.Manager, influxDB *storage.InfluxDBClient, logger *slog.Logger) (*Service, error) {
+func NewService(cfg *config.Config, state *state.Manager, logger *slog.Logger) (*Service, error) {
 	if cfg.SolarEdgeAPIKey == "" {
 		return nil, fmt.Errorf("SolarEdge API key is required")
 	}
@@ -45,11 +43,10 @@ func NewService(cfg *config.Config, state *state.Manager, influxDB *storage.Infl
 	}
 
 	return &Service{
-		apiKey:   cfg.SolarEdgeAPIKey,
-		siteID:   cfg.SolarEdgeSiteID,
-		state:    state,
-		influxDB: influxDB,
-		logger:   logger,
+		apiKey: cfg.SolarEdgeAPIKey,
+		siteID: cfg.SolarEdgeSiteID,
+		state:  state,
+		logger: logger,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -102,13 +99,6 @@ func (s *Service) fetchAndUpdate() {
 
 	s.logger.Info("Updated solar power", "power", power)
 	s.state.UpdateSolar(power)
-
-	// Write to InfluxDB
-	if s.influxDB != nil {
-		if err := s.influxDB.WriteSolarPower(power, time.Now()); err != nil {
-			s.logger.Warn("Failed to write solar power to InfluxDB", "error", err)
-		}
-	}
 }
 
 func (s *Service) fetchCurrentPower() (float64, error) {

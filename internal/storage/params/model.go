@@ -1,6 +1,12 @@
 package params
 
-import "time"
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/shopspring/decimal"
+)
 
 // PersistentParam represents a persistent configuration parameter stored in SQLite
 type PersistentParam struct {
@@ -26,6 +32,35 @@ type UpdateParamRequest struct {
 
 // DefaultParams defines the default rows that should exist in the parameters table
 var DefaultParams = []PersistentParam{
-	{Key: "DynamicAddPrice", Description: "Dynamic addition to price", Content: `{"value": 0.04}`},
-	{Key: "StaticAddPrice", Description: "Static addition to price", Content: `{"value": 0.06}`},
+	{Key: "TransferAddPrice", Description: "Electricity transfer addition to price", Content: `{"value": 0.2584}`},
+	{Key: "EnergyTaxAddPrice", Description: "Energy tax  addition to price", Content: `{"value": 0.36}`},
+	{Key: "DynamicAddPrice", Description: "Dynamic addition to price", Content: `{"value": 0.0442}`},
+	{Key: "StaticAddPrice", Description: "Static addition to price", Content: `{"value": 0.04}`},
+	{Key: "VAT", Description: "VAT percent", Content: `{"value": 25}`},
+}
+
+// ParseContentValue extracts the numeric "value" field from a parameter's JSON content string.
+// Content is expected to be in the format: {"value": <number>}
+func ParseContentValue(content string) (decimal.Decimal, error) {
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		return decimal.Zero, fmt.Errorf("invalid JSON content: %w", err)
+	}
+
+	raw, ok := parsed["value"]
+	if !ok {
+		return decimal.Zero, fmt.Errorf("missing \"value\" key in content")
+	}
+
+	// Try parsing as a decimal number directly from the raw JSON token
+	var num json.Number
+	if err := json.Unmarshal(raw, &num); err != nil {
+		return decimal.Zero, fmt.Errorf("\"value\" is not a number")
+	}
+
+	d, err := decimal.NewFromString(num.String())
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("\"value\" is not a valid decimal: %w", err)
+	}
+	return d, nil
 }

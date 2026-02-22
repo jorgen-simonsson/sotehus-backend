@@ -89,6 +89,60 @@
                 }
             }
         },
+        "/api/energy/cost": {
+            "get": {
+                "description": "Calculates the actual energy cost for a period, accounting for changing spot prices.\nGroups records into blocks of constant spot price, computes per-block kWh and cost,\nadds configured price components (transfer, energy tax, dynamic and static additions),\nand applies VAT.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "energy"
+                ],
+                "summary": "Get energy cost for a period",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Start timestamp (RFC3339 format, e.g. 2026-02-01T00:00:00+01:00)",
+                        "name": "start",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Stop timestamp (RFC3339 format, e.g. 2026-02-21T00:00:00+01:00)",
+                        "name": "stop",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.EnergyCostResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid start/stop parameter",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to calculate energy cost",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "503": {
+                        "description": "InfluxDB not configured",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/energy/sold": {
             "get": {
                 "description": "Returns the energy sold in kWh between two timestamps",
@@ -420,6 +474,78 @@
                 "unit": {
                     "type": "string",
                     "example": "kWh"
+                }
+            }
+        },
+        "api.EnergyCostBlock": {
+            "type": "object",
+            "properties": {
+                "added_prices": {
+                    "type": "number",
+                    "example": 0.7
+                },
+                "consumed_kwh": {
+                    "type": "number",
+                    "example": 12.34
+                },
+                "cost": {
+                    "type": "number",
+                    "example": 14.22
+                },
+                "spot_price": {
+                    "type": "number",
+                    "example": 0.45
+                },
+                "start": {
+                    "type": "string",
+                    "example": "2026-02-22T00:00:00+01:00"
+                },
+                "stop": {
+                    "type": "string",
+                    "example": "2026-02-22T01:00:00+01:00"
+                },
+                "total_price": {
+                    "type": "number",
+                    "example": 1.15
+                }
+            }
+        },
+        "api.EnergyCostResponse": {
+            "type": "object",
+            "properties": {
+                "blocks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.EnergyCostBlock"
+                    }
+                },
+                "cost_before_vat": {
+                    "type": "number",
+                    "example": 180.73
+                },
+                "period_start": {
+                    "type": "string",
+                    "example": "2026-02-22T00:00:00+01:00"
+                },
+                "period_stop": {
+                    "type": "string",
+                    "example": "2026-02-22T12:00:00+01:00"
+                },
+                "total_consumed_kwh": {
+                    "type": "number",
+                    "example": 156.78
+                },
+                "total_cost": {
+                    "type": "number",
+                    "example": 225.91
+                },
+                "unit": {
+                    "type": "string",
+                    "example": "SEK"
+                },
+                "vat_percent": {
+                    "type": "number",
+                    "example": 25
                 }
             }
         },

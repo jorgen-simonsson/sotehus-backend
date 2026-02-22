@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/jorgen-simonsson/sotehus-backend/internal/state"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/storage"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/storage/params"
+	"github.com/shopspring/decimal"
 )
 
 // Handler holds HTTP handlers
@@ -465,4 +467,236 @@ func (h *Handler) UpdateParam(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
+}
+
+// EnergyCostBlock represents a single time block where the spot price was constant
+type EnergyCostBlock struct {
+	SpotPrice   float64 `json:"spot_price" example:"0.45"`
+	AddedPrices float64 `json:"added_prices" example:"0.70"`
+	TotalPrice  float64 `json:"total_price" example:"1.15"`
+	ConsumedKWh float64 `json:"consumed_kwh" example:"12.34"`
+	Cost        float64 `json:"cost" example:"14.22"`
+	Start       string  `json:"start" example:"2026-02-22T00:00:00+01:00"`
+	Stop        string  `json:"stop" example:"2026-02-22T01:00:00+01:00"`
+}
+
+// EnergyCostResponse represents the response for /api/energy/cost
+type EnergyCostResponse struct {
+	PeriodStart      string            `json:"period_start" example:"2026-02-22T00:00:00+01:00"`
+	PeriodStop       string            `json:"period_stop" example:"2026-02-22T12:00:00+01:00"`
+	TotalConsumedKWh float64           `json:"total_consumed_kwh" example:"156.78"`
+	CostBeforeVAT    float64           `json:"cost_before_vat" example:"180.73"`
+	VATPercent       float64           `json:"vat_percent" example:"25"`
+	TotalCost        float64           `json:"total_cost" example:"225.91"`
+	Unit             string            `json:"unit" example:"SEK"`
+	Blocks           []EnergyCostBlock `json:"blocks"`
+}
+
+// GetEnergyCost handles GET /api/energy/cost requests
+// @Summary Get energy cost for a period
+// @Description Calculates the actual energy cost for a period, accounting for changing spot prices.
+// @Description Groups records into blocks of constant spot price, computes per-block kWh and cost,
+// @Description adds configured price components (transfer, energy tax, dynamic and static additions),
+// @Description and applies VAT.
+// @Tags energy
+// @Produce json
+// @Param start query string true "Start timestamp (RFC3339 format, e.g. 2026-02-01T00:00:00+01:00)"
+// @Param stop query string true "Stop timestamp (RFC3339 format, e.g. 2026-02-21T00:00:00+01:00)"
+// @Success 200 {object} EnergyCostResponse
+// @Failure 400 {string} string "Invalid start/stop parameter"
+// @Failure 500 {string} string "Failed to calculate energy cost"
+// @Failure 503 {string} string "InfluxDB not configured"
+// @Router /api/energy/cost [get]
+func (h *Handler) GetEnergyCost(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// Parse start parameter
+	startStr := r.URL.Query().Get("start")
+	if startStr == "" {
+		http.Error(w, "Missing required parameter: start", http.StatusBadRequest)
+		return
+	}
+	startTime, err := time.Parse(time.RFC3339, startStr)
+	if err != nil {
+		h.logger.Error("Invalid start parameter", "value", startStr, "error", err)
+		http.Error(w, "Invalid start parameter. Use RFC3339 format (e.g. 2026-02-01T00:00:00+01:00)", http.StatusBadRequest)
+		return
+	}
+
+	// Parse stop parameter
+	stopStr := r.URL.Query().Get("stop")
+	if stopStr == "" {
+		http.Error(w, "Missing required parameter: stop", http.StatusBadRequest)
+		return
+	}
+	stopTime, err := time.Parse(time.RFC3339, stopStr)
+	if err != nil {
+		h.logger.Error("Invalid stop parameter", "value", stopStr, "error", err)
+		http.Error(w, "Invalid stop parameter. Use RFC3339 format (e.g. 2026-02-21T00:00:00+01:00)", http.StatusBadRequest)
+		return
+	}
+
+	// Validate that stop is after start
+	if !stopTime.After(startTime) {
+		http.Error(w, "Stop timestamp must be after start timestamp", http.StatusBadRequest)
+		return
+	}
+
+	// Check infrastructure availability
+	if h.influxDB == nil {
+		h.logger.Error("InfluxDB client not available")
+		http.Error(w, "InfluxDB not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	if h.paramsStore == nil {
+		h.logger.Error("Parameter store not available")
+		http.Error(w, "Parameter store not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Fetch price add-on parameters from SQLite
+	addPrices, err := h.fetchAddPrices()
+	if err != nil {
+		h.logger.Error("Failed to fetch price parameters", "error", err)
+		http.Error(w, "Failed to fetch price parameters: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	vatPercent, err := h.fetchParamValue("VAT")
+	if err != nil {
+		h.logger.Error("Failed to fetch VAT parameter", "error", err)
+		http.Error(w, "Failed to fetch VAT parameter: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Query InfluxDB for records with spot_price and grid_enery_consumed_ack
+	records, err := h.influxDB.GetFieldsInRange(startTime, stopTime)
+	if err != nil {
+		h.logger.Error("Failed to query energy data", "start", startStr, "stop", stopStr, "error", err)
+		http.Error(w, "Failed to query energy data: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// If no records, return zero-cost response
+	if len(records) == 0 {
+		response := EnergyCostResponse{
+			PeriodStart:      startTime.Format(time.RFC3339),
+			PeriodStop:       stopTime.Format(time.RFC3339),
+			TotalConsumedKWh: 0,
+			CostBeforeVAT:    0,
+			VATPercent:       vatPercent.InexactFloat64(),
+			TotalCost:        0,
+			Unit:             "SEK",
+			Blocks:           []EnergyCostBlock{},
+		}
+
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			h.logger.Error("Failed to encode response", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	// Group records into blocks of constant spot_price and calculate costs
+	blocks := h.calculateCostBlocks(records, addPrices)
+
+	// Sum totals using decimal
+	totalConsumed := decimal.Zero
+	costBeforeVAT := decimal.Zero
+	for _, b := range blocks {
+		totalConsumed = totalConsumed.Add(decimal.NewFromFloat(b.ConsumedKWh))
+		costBeforeVAT = costBeforeVAT.Add(decimal.NewFromFloat(b.Cost))
+	}
+
+	vatMultiplier := decimal.NewFromInt(1).Add(vatPercent.Div(decimal.NewFromInt(100)))
+	totalCost := costBeforeVAT.Mul(vatMultiplier).Round(2)
+
+	response := EnergyCostResponse{
+		PeriodStart:      startTime.Format(time.RFC3339),
+		PeriodStop:       stopTime.Format(time.RFC3339),
+		TotalConsumedKWh: totalConsumed.Round(2).InexactFloat64(),
+		CostBeforeVAT:    costBeforeVAT.Round(2).InexactFloat64(),
+		VATPercent:       vatPercent.InexactFloat64(),
+		TotalCost:        totalCost.InexactFloat64(),
+		Unit:             "SEK",
+		Blocks:           blocks,
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		h.logger.Error("Failed to encode response", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+}
+
+// fetchParamValue retrieves a single parameter's numeric value from the store.
+func (h *Handler) fetchParamValue(key string) (decimal.Decimal, error) {
+	p, err := h.paramsStore.GetByKey(key)
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("parameter %q not found: %w", key, err)
+	}
+	val, err := params.ParseContentValue(p.Content)
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("parameter %q has invalid content: %w", key, err)
+	}
+	return val, nil
+}
+
+// fetchAddPrices retrieves and sums the four add-on price parameters.
+func (h *Handler) fetchAddPrices() (decimal.Decimal, error) {
+	keys := []string{"TransferAddPrice", "EnergyTaxAddPrice", "DynamicAddPrice", "StaticAddPrice"}
+	total := decimal.Zero
+	for _, key := range keys {
+		val, err := h.fetchParamValue(key)
+		if err != nil {
+			return decimal.Zero, err
+		}
+		total = total.Add(val)
+	}
+	return total, nil
+}
+
+// calculateCostBlocks groups time-ordered records into blocks of constant spot_price
+// and calculates the energy consumed and cost for each block.
+// All arithmetic is performed with decimal.Decimal; final values are rounded to 2 decimal places.
+func (h *Handler) calculateCostBlocks(records []storage.TimeFieldRecord, addPrices decimal.Decimal) []EnergyCostBlock {
+	if len(records) == 0 {
+		return nil
+	}
+
+	var blocks []EnergyCostBlock
+
+	blockStart := 0
+	currentPrice := records[0].SpotPrice
+
+	for i := 1; i <= len(records); i++ {
+		// End of data or price changed — close current block
+		if i == len(records) || !records[i].SpotPrice.Equal(currentPrice) {
+			firstRec := records[blockStart]
+			lastRec := records[i-1]
+
+			consumedKWh := lastRec.ConsumedAck.Sub(firstRec.ConsumedAck)
+			totalPrice := currentPrice.Add(addPrices)
+			cost := consumedKWh.Mul(totalPrice)
+
+			blocks = append(blocks, EnergyCostBlock{
+				SpotPrice:   currentPrice.Round(2).InexactFloat64(),
+				AddedPrices: addPrices.Round(2).InexactFloat64(),
+				TotalPrice:  totalPrice.Round(2).InexactFloat64(),
+				ConsumedKWh: consumedKWh.Round(2).InexactFloat64(),
+				Cost:        cost.Round(2).InexactFloat64(),
+				Start:       firstRec.Time.Format(time.RFC3339),
+				Stop:        lastRec.Time.Format(time.RFC3339),
+			})
+
+			if i < len(records) {
+				blockStart = i
+				currentPrice = records[i].SpotPrice
+			}
+		}
+	}
+
+	return blocks
 }

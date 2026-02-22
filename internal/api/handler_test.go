@@ -12,7 +12,9 @@ import (
 
 	"github.com/jorgen-simonsson/sotehus-backend/internal/models"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/state"
+	"github.com/jorgen-simonsson/sotehus-backend/internal/storage"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/storage/params"
+	"github.com/shopspring/decimal"
 )
 
 func TestNewHandler(t *testing.T) {
@@ -269,8 +271,8 @@ func TestGetAllParams(t *testing.T) {
 		t.Fatalf("Failed to unmarshal response: %v", err)
 	}
 
-	if len(result) != 2 {
-		t.Fatalf("Expected 2 default params, got %d", len(result))
+	if len(result) != 5 {
+		t.Fatalf("Expected 5 default params, got %d", len(result))
 	}
 
 	keys := make(map[string]bool)
@@ -282,6 +284,15 @@ func TestGetAllParams(t *testing.T) {
 	}
 	if !keys["StaticAddPrice"] {
 		t.Error("Missing default param StaticAddPrice")
+	}
+	if !keys["TransferAddPrice"] {
+		t.Error("Missing default param TransferAddPrice")
+	}
+	if !keys["EnergyTaxAddPrice"] {
+		t.Error("Missing default param EnergyTaxAddPrice")
+	}
+	if !keys["VAT"] {
+		t.Error("Missing default param VAT")
 	}
 }
 
@@ -305,8 +316,8 @@ func TestGetParamByKey_Found(t *testing.T) {
 	if result.Key != "DynamicAddPrice" {
 		t.Errorf("Key = %q, want %q", result.Key, "DynamicAddPrice")
 	}
-	if result.Content != `{"value": 0.04}` {
-		t.Errorf("Content = %q, want %q", result.Content, `{"value": 0.04}`)
+	if result.Content != `{"value": 0.0442}` {
+		t.Errorf("Content = %q, want %q", result.Content, `{"value": 0.0442}`)
 	}
 }
 
@@ -361,8 +372,8 @@ func TestCreateParam_Success(t *testing.T) {
 	if err := json.Unmarshal(recAll.Body.Bytes(), &allParams); err != nil {
 		t.Fatalf("Failed to unmarshal response: %v", err)
 	}
-	if len(allParams) != 3 {
-		t.Errorf("Expected 3 params after create, got %d", len(allParams))
+	if len(allParams) != 6 {
+		t.Errorf("Expected 6 params after create, got %d", len(allParams))
 	}
 }
 
@@ -648,5 +659,293 @@ func TestCreateThenGetThenUpdateFlow(t *testing.T) {
 
 	if recDup.Code != http.StatusConflict {
 		t.Errorf("Duplicate create: status = %d, want %d", recDup.Code, http.StatusConflict)
+	}
+}
+
+// --- Energy cost endpoint tests ---
+
+func TestGetEnergyCost_NoInfluxDB(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	store := newTestParamsStore(t)
+	handler := NewHandler(mgr, nil, store, logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/energy/cost?start=2026-02-01T00:00:00Z&stop=2026-02-02T00:00:00Z", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetEnergyCost(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestGetEnergyCost_NoParamsStore(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	// handler with nil paramsStore and nil influxDB - influxDB is checked first
+	handler := NewHandler(mgr, nil, nil, logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/energy/cost?start=2026-02-01T00:00:00Z&stop=2026-02-02T00:00:00Z", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetEnergyCost(rec, req)
+
+	// InfluxDB nil is checked first, so this returns 503 for InfluxDB
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestGetEnergyCost_MissingStart(t *testing.T) {
+	router, _ := newTestRouter(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/energy/cost?stop=2026-02-02T00:00:00Z", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetEnergyCost_MissingStop(t *testing.T) {
+	router, _ := newTestRouter(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/energy/cost?start=2026-02-01T00:00:00Z", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetEnergyCost_InvalidStartFormat(t *testing.T) {
+	router, _ := newTestRouter(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/energy/cost?start=bad&stop=2026-02-02T00:00:00Z", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetEnergyCost_InvalidStopFormat(t *testing.T) {
+	router, _ := newTestRouter(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/energy/cost?start=2026-02-01T00:00:00Z&stop=bad", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetEnergyCost_StopBeforeStart(t *testing.T) {
+	router, _ := newTestRouter(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/energy/cost?start=2026-02-02T00:00:00Z&stop=2026-02-01T00:00:00Z", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetEnergyCost_RouteRegistered(t *testing.T) {
+	router, _ := newTestRouter(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/energy/cost?start=2026-02-01T00:00:00Z&stop=2026-02-02T00:00:00Z", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	// Should not be 404 (route exists — will be 503 because InfluxDB is nil)
+	if rec.Code == http.StatusNotFound {
+		t.Error("Route /api/energy/cost not registered")
+	}
+	// With nil InfluxDB, expect 503
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("Status code = %d, want %d (nil InfluxDB)", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+// --- calculateCostBlocks unit tests ---
+
+func TestCalculateCostBlocks_Empty(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, nil, nil, logger)
+
+	blocks := handler.calculateCostBlocks(nil, decimal.NewFromFloat(0.5))
+	if blocks != nil {
+		t.Errorf("Expected nil for empty records, got %d blocks", len(blocks))
+	}
+}
+
+func TestCalculateCostBlocks_SinglePrice(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, nil, nil, logger)
+
+	now := time.Now()
+	records := []storage.TimeFieldRecord{
+		{Time: now, SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(100.0)},
+		{Time: now.Add(1 * time.Minute), SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(100.5)},
+		{Time: now.Add(2 * time.Minute), SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(101.0)},
+	}
+
+	addPrices := decimal.NewFromFloat(0.70) // sum of all add prices
+	blocks := handler.calculateCostBlocks(records, addPrices)
+
+	if len(blocks) != 1 {
+		t.Fatalf("Expected 1 block, got %d", len(blocks))
+	}
+
+	b := blocks[0]
+	// 101.0 - 100.0 = 1.0 kWh, price = 0.50 + 0.70 = 1.20, cost = 1.20
+	if b.SpotPrice != 0.50 {
+		t.Errorf("SpotPrice = %f, want %f", b.SpotPrice, 0.50)
+	}
+	if b.ConsumedKWh != 1.0 {
+		t.Errorf("ConsumedKWh = %f, want %f", b.ConsumedKWh, 1.0)
+	}
+	if b.Cost != 1.2 {
+		t.Errorf("Cost = %f, want %f", b.Cost, 1.2)
+	}
+	if b.TotalPrice != 1.2 {
+		t.Errorf("TotalPrice = %f, want %f", b.TotalPrice, 1.2)
+	}
+}
+
+func TestCalculateCostBlocks_MultiplePrices(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, nil, nil, logger)
+
+	now := time.Now()
+	records := []storage.TimeFieldRecord{
+		// Block 1: price 0.50, 3 records
+		{Time: now, SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(100.0)},
+		{Time: now.Add(1 * time.Minute), SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(102.0)},
+		{Time: now.Add(2 * time.Minute), SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(105.0)},
+		// Block 2: price 0.80, 2 records
+		{Time: now.Add(3 * time.Minute), SpotPrice: decimal.NewFromFloat(0.80), ConsumedAck: decimal.NewFromFloat(105.5)},
+		{Time: now.Add(4 * time.Minute), SpotPrice: decimal.NewFromFloat(0.80), ConsumedAck: decimal.NewFromFloat(108.0)},
+		// Block 3: price 0.30, 2 records
+		{Time: now.Add(5 * time.Minute), SpotPrice: decimal.NewFromFloat(0.30), ConsumedAck: decimal.NewFromFloat(108.5)},
+		{Time: now.Add(6 * time.Minute), SpotPrice: decimal.NewFromFloat(0.30), ConsumedAck: decimal.NewFromFloat(110.0)},
+	}
+
+	addPrices := decimal.NewFromFloat(0.50)
+	blocks := handler.calculateCostBlocks(records, addPrices)
+
+	if len(blocks) != 3 {
+		t.Fatalf("Expected 3 blocks, got %d", len(blocks))
+	}
+
+	// Block 1: 105.0 - 100.0 = 5.0 kWh, price = 0.50 + 0.50 = 1.00, cost = 5.00
+	if blocks[0].ConsumedKWh != 5.0 {
+		t.Errorf("Block 0 ConsumedKWh = %f, want %f", blocks[0].ConsumedKWh, 5.0)
+	}
+	if blocks[0].Cost != 5.0 {
+		t.Errorf("Block 0 Cost = %f, want %f", blocks[0].Cost, 5.0)
+	}
+
+	// Block 2: 108.0 - 105.5 = 2.5 kWh, price = 0.80 + 0.50 = 1.30, cost = 3.25
+	if blocks[1].ConsumedKWh != 2.5 {
+		t.Errorf("Block 1 ConsumedKWh = %f, want %f", blocks[1].ConsumedKWh, 2.5)
+	}
+	if blocks[1].Cost != 3.25 {
+		t.Errorf("Block 1 Cost = %f, want %f", blocks[1].Cost, 3.25)
+	}
+
+	// Block 3: 110.0 - 108.5 = 1.5 kWh, price = 0.30 + 0.50 = 0.80, cost = 1.20
+	if blocks[2].ConsumedKWh != 1.5 {
+		t.Errorf("Block 2 ConsumedKWh = %f, want %f", blocks[2].ConsumedKWh, 1.5)
+	}
+	if blocks[2].Cost != 1.2 {
+		t.Errorf("Block 2 Cost = %f, want %f", blocks[2].Cost, 1.2)
+	}
+}
+
+func TestCalculateCostBlocks_SingleRecord(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, nil, nil, logger)
+
+	records := []storage.TimeFieldRecord{
+		{Time: time.Now(), SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(100.0)},
+	}
+
+	blocks := handler.calculateCostBlocks(records, decimal.NewFromFloat(0.70))
+
+	if len(blocks) != 1 {
+		t.Fatalf("Expected 1 block, got %d", len(blocks))
+	}
+	// Single record means 0 kWh consumed (same first and last)
+	if blocks[0].ConsumedKWh != 0 {
+		t.Errorf("ConsumedKWh = %f, want 0", blocks[0].ConsumedKWh)
+	}
+	if blocks[0].Cost != 0 {
+		t.Errorf("Cost = %f, want 0", blocks[0].Cost)
+	}
+}
+
+// --- fetchAddPrices and fetchParamValue tests ---
+
+func TestFetchAddPrices_WithDefaults(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	store := newTestParamsStore(t)
+	handler := NewHandler(mgr, nil, store, logger)
+
+	addPrices, err := handler.fetchAddPrices()
+	if err != nil {
+		t.Fatalf("fetchAddPrices failed: %v", err)
+	}
+
+	// TransferAddPrice: 0.2584, EnergyTaxAddPrice: 0.36, DynamicAddPrice: 0.0442, StaticAddPrice: 0.04
+	expected := decimal.NewFromFloat(0.2584).Add(decimal.NewFromFloat(0.36)).Add(decimal.NewFromFloat(0.0442)).Add(decimal.NewFromFloat(0.04))
+	if !addPrices.Equal(expected) {
+		t.Errorf("addPrices = %s, want %s", addPrices, expected)
+	}
+}
+
+func TestFetchParamValue_VAT(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	store := newTestParamsStore(t)
+	handler := NewHandler(mgr, nil, store, logger)
+
+	vat, err := handler.fetchParamValue("VAT")
+	if err != nil {
+		t.Fatalf("fetchParamValue failed: %v", err)
+	}
+
+	if !vat.Equal(decimal.NewFromInt(25)) {
+		t.Errorf("VAT = %s, want 25", vat)
+	}
+}
+
+func TestFetchParamValue_NotFound(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	store := newTestParamsStore(t)
+	handler := NewHandler(mgr, nil, store, logger)
+
+	_, err := handler.fetchParamValue("NonExistent")
+	if err == nil {
+		t.Fatal("Expected error for non-existent parameter")
 	}
 }

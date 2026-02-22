@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+
+	"github.com/shopspring/decimal"
 )
 
 func newTestStore(t *testing.T) *Store {
@@ -106,8 +108,8 @@ func TestGetByKey_Found(t *testing.T) {
 	if p.Description != "Dynamic addition to price" {
 		t.Errorf("Description = %q, want %q", p.Description, "Dynamic addition to price")
 	}
-	if p.Content != `{"value": 0.04}` {
-		t.Errorf("Content = %q, want %q", p.Content, `{"value": 0.04}`)
+	if p.Content != `{"value": 0.0442}` {
+		t.Errorf("Content = %q, want %q", p.Content, `{"value": 0.0442}`)
 	}
 }
 
@@ -223,5 +225,70 @@ func TestUpdate_NotFound(t *testing.T) {
 	}
 	if err != ErrNotFound {
 		t.Errorf("Expected ErrNotFound, got %v", err)
+	}
+}
+
+// --- ParseContentValue tests ---
+
+func TestParseContentValue_ValidFloat(t *testing.T) {
+	val, err := ParseContentValue(`{"value": 0.2584}`)
+	if err != nil {
+		t.Fatalf("ParseContentValue failed: %v", err)
+	}
+	expected := decimal.RequireFromString("0.2584")
+	if !val.Equal(expected) {
+		t.Errorf("value = %s, want %s", val, expected)
+	}
+}
+
+func TestParseContentValue_ValidInteger(t *testing.T) {
+	val, err := ParseContentValue(`{"value": 25}`)
+	if err != nil {
+		t.Fatalf("ParseContentValue failed: %v", err)
+	}
+	if !val.Equal(decimal.NewFromInt(25)) {
+		t.Errorf("value = %s, want 25", val)
+	}
+}
+
+func TestParseContentValue_InvalidJSON(t *testing.T) {
+	_, err := ParseContentValue(`not json`)
+	if err == nil {
+		t.Fatal("Expected error for invalid JSON")
+	}
+}
+
+func TestParseContentValue_MissingValueKey(t *testing.T) {
+	_, err := ParseContentValue(`{"other": 42}`)
+	if err == nil {
+		t.Fatal("Expected error for missing 'value' key")
+	}
+}
+
+func TestParseContentValue_NonNumericValue(t *testing.T) {
+	_, err := ParseContentValue(`{"value": "hello"}`)
+	if err == nil {
+		t.Fatal("Expected error for non-numeric value")
+	}
+}
+
+func TestParseContentValue_Zero(t *testing.T) {
+	val, err := ParseContentValue(`{"value": 0}`)
+	if err != nil {
+		t.Fatalf("ParseContentValue failed: %v", err)
+	}
+	if !val.Equal(decimal.Zero) {
+		t.Errorf("value = %s, want 0", val)
+	}
+}
+
+func TestParseContentValue_Negative(t *testing.T) {
+	val, err := ParseContentValue(`{"value": -1.5}`)
+	if err != nil {
+		t.Fatalf("ParseContentValue failed: %v", err)
+	}
+	expected := decimal.RequireFromString("-1.5")
+	if !val.Equal(expected) {
+		t.Errorf("value = %s, want %s", val, expected)
 	}
 }

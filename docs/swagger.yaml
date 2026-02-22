@@ -21,6 +21,58 @@ definitions:
         example: kWh
         type: string
     type: object
+  api.EnergyCostBlock:
+    properties:
+      added_prices:
+        example: 0.7
+        type: number
+      consumed_kwh:
+        example: 12.34
+        type: number
+      cost:
+        example: 14.22
+        type: number
+      spot_price:
+        example: 0.45
+        type: number
+      start:
+        example: "2026-02-22T00:00:00+01:00"
+        type: string
+      stop:
+        example: "2026-02-22T01:00:00+01:00"
+        type: string
+      total_price:
+        example: 1.15
+        type: number
+    type: object
+  api.EnergyCostResponse:
+    properties:
+      blocks:
+        items:
+          $ref: '#/definitions/api.EnergyCostBlock'
+        type: array
+      cost_before_vat:
+        example: 180.73
+        type: number
+      period_start:
+        example: "2026-02-22T00:00:00+01:00"
+        type: string
+      period_stop:
+        example: "2026-02-22T12:00:00+01:00"
+        type: string
+      total_consumed_kwh:
+        example: 156.78
+        type: number
+      total_cost:
+        example: 225.91
+        type: number
+      unit:
+        example: SEK
+        type: string
+      vat_percent:
+        example: 25
+        type: number
+    type: object
   api.EnergySoldResponse:
     properties:
       actual_start:
@@ -230,6 +282,46 @@ paths:
           schema:
             type: string
       summary: Get consumed energy for a period
+      tags:
+      - energy
+  /api/energy/cost:
+    get:
+      description: |-
+        Calculates the actual energy cost for a period, accounting for changing spot prices.
+        Groups records into blocks of constant spot price, computes per-block kWh and cost,
+        adds configured price components (transfer, energy tax, dynamic and static additions),
+        and applies VAT.
+      parameters:
+      - description: Start timestamp (RFC3339 format, e.g. 2026-02-01T00:00:00+01:00)
+        in: query
+        name: start
+        required: true
+        type: string
+      - description: Stop timestamp (RFC3339 format, e.g. 2026-02-21T00:00:00+01:00)
+        in: query
+        name: stop
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.EnergyCostResponse'
+        "400":
+          description: Invalid start/stop parameter
+          schema:
+            type: string
+        "500":
+          description: Failed to calculate energy cost
+          schema:
+            type: string
+        "503":
+          description: InfluxDB not configured
+          schema:
+            type: string
+      summary: Get energy cost for a period
       tags:
       - energy
   /api/energy/sold:

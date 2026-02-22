@@ -12,6 +12,7 @@ A Go application that provides real-time energy monitoring data via a REST API.
   - [GET /api/version](#get-apiversion)
   - [GET /api/energy/consumed](#get-apienergyconsumed)
   - [GET /api/energy/sold](#get-apienergysold)
+  - [GET /api/energy/cost](#get-apienergycost)
   - [GET /health](#get-health)
 - [Persistent Parameters](#persistent-parameters)
   - [Overview](#parameters-overview)
@@ -113,7 +114,7 @@ Returns the API version.
 **Response:**
 ```json
 {
-    "version": "1.2.0"
+    "version": "1.4.0"
 }
 ```
 
@@ -173,6 +174,61 @@ Returns the energy sold (exported to grid) in kWh between two timestamps.
 **Errors:**
 - Returns 500 if no data exists at or before the start or stop timestamp
 
+### `GET /api/energy/cost`
+
+Returns the actual energy cost for a period, broken down by spot-price blocks.
+
+The endpoint queries InfluxDB for `spot_price` and consumed-energy accumulator readings in the requested time range, groups consecutive records that share the same spot price into blocks, and computes per-block kWh and cost. Configured price additions (transfer fee, energy tax, dynamic and static additions) are added on top of the spot price for each block. Finally, VAT is applied to the total.
+
+If no spot price is recorded for a given time window, the most recent previous value is carried forward (InfluxDB `fill(usePrevious: true)`).
+
+**Parameters:**
+- `start` – Start timestamp in RFC3339 format (e.g., `2026-02-01T00:00:00+01:00`)
+- `stop` – Stop timestamp in RFC3339 format (e.g., `2026-02-21T00:00:00+01:00`)
+
+**Response:**
+```json
+{
+    "period_start": "2026-02-01T00:00:00+01:00",
+    "period_stop": "2026-02-21T00:00:00+01:00",
+    "total_consumed_kwh": 156.78,
+    "cost_before_vat": 180.73,
+    "vat_percent": 25,
+    "total_cost": 225.91,
+    "unit": "SEK",
+    "blocks": [
+        {
+            "spot_price": 0.45,
+            "added_prices": 0.7026,
+            "total_price": 1.1526,
+            "consumed_kwh": 12.34,
+            "cost": 14.22,
+            "start": "2026-02-01T00:00:00+01:00",
+            "stop": "2026-02-01T01:00:00+01:00"
+        }
+    ]
+}
+```
+
+**Field descriptions:**
+- `period_start` / `period_stop` – Requested time range
+- `total_consumed_kwh` – Total energy consumed in the period (kWh)
+- `cost_before_vat` – Sum of all block costs before VAT (SEK)
+- `vat_percent` – VAT percentage applied (from persistent parameters)
+- `total_cost` – Final cost including VAT (SEK)
+- `blocks` – Array of per-price-block breakdowns:
+  - `spot_price` – Spot price during this block (SEK/kWh)
+  - `added_prices` – Sum of transfer, energy tax, dynamic and static additions (SEK/kWh)
+  - `total_price` – `spot_price + added_prices` (SEK/kWh)
+  - `consumed_kwh` – Energy consumed in this block (kWh)
+  - `cost` – `consumed_kwh × total_price` (SEK, before VAT)
+  - `start` / `stop` – Time boundaries of this block
+
+**Errors:**
+- `400` – Missing or invalid start/stop parameter, or stop is before start
+- `500` – Failed to fetch parameters or query InfluxDB
+- `503` – InfluxDB or parameter store not configured
+
 ### `GET /health`
 
 Health check endpoint.
@@ -208,8 +264,11 @@ The following parameters are automatically seeded on first startup if they don't
 
 | Key | Description | Default Content |
 |-----|-------------|----------------|
-| `DynamicAddPrice` | Dynamic addition to price | `{"value": 0.04}` |
-| `StaticAddPrice` | Static addition to price | `{"value": 0.06}` |
+| `TransferAddPrice` | Electricity transfer addition to price | `{"value": 0.2584}` |
+| `EnergyTaxAddPrice` | Energy tax addition to price | `{"value": 0.36}` |
+| `DynamicAddPrice` | Dynamic addition to price | `{"value": 0.0442}` |
+| `StaticAddPrice` | Static addition to price | `{"value": 0.04}` |
+| `VAT` | VAT percent | `{"value": 25}` |
 
 Default parameters are defined in `internal/storage/params/model.go` and can be extended by adding entries to the `DefaultParams` slice.
 
@@ -510,6 +569,19 @@ go test -v ./internal/storage/params
 Note: Some packages have lower coverage because they require external services (MQTT broker, InfluxDB, HTTP APIs) for complete integration testing.
 
 ## Changelog
+
+### 2026-02-22 Ver 1.4.0
+- New endpoint: `GET /api/energy/cost` – calculates actual energy cost for a period
+  - Groups records into blocks of constant spot price
+  - Adds configured price components (transfer, energy tax, dynamic, static)
+  - Applies VAT from persistent parameters
+  - Returns per-block breakdown with kWh and cost
+- Added `ParseContentValue` helper for extracting numeric values from parameter JSON
+- Added `GetFieldsInRange` InfluxDB query combining spot price and consumed energy
+- Extended default parameters: `TransferAddPrice`, `EnergyTaxAddPrice`, `VAT`
+- Consolidated InfluxDB writes: all fields written in a single record per cycle
+- Comprehensive unit tests for energy cost calculation and parameter parsing
+- Updated Swagger documentation
 
 ### 2026-02-22 Ver 1.3.0
 - Added persistent parameter store backed by SQLite (`internal/storage/params/`)

@@ -19,7 +19,7 @@ func TestNewService(t *testing.T) {
 		SpotPriceRegion: "SE4",
 	}
 
-	service := NewService(cfg, mgr, nil, logger)
+	service := NewService(cfg, mgr, logger)
 
 	if service == nil {
 		t.Fatal("Expected non-nil service")
@@ -40,7 +40,7 @@ func TestGetCurrentPriceEmptyList(t *testing.T) {
 		SpotPriceRegion: "SE4",
 	}
 
-	service := NewService(cfg, mgr, nil, logger)
+	service := NewService(cfg, mgr, logger)
 
 	prices := []models.SpotPriceEntry{}
 
@@ -62,7 +62,7 @@ func TestGetCurrentPriceMatchingHour(t *testing.T) {
 		SpotPriceRegion: "SE4",
 	}
 
-	service := NewService(cfg, mgr, nil, logger)
+	service := NewService(cfg, mgr, logger)
 
 	now := time.Now()
 	hourStart := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 0, 0, 0, now.Location())
@@ -95,7 +95,7 @@ func TestGetCurrentPriceNoMatch(t *testing.T) {
 		SpotPriceRegion: "SE4",
 	}
 
-	service := NewService(cfg, mgr, nil, logger)
+	service := NewService(cfg, mgr, logger)
 
 	// Create prices for yesterday
 	yesterday := time.Now().AddDate(0, 0, -1)
@@ -129,7 +129,7 @@ func TestGetCurrentPriceInvalidTimeFormat(t *testing.T) {
 		SpotPriceRegion: "SE4",
 	}
 
-	service := NewService(cfg, mgr, nil, logger)
+	service := NewService(cfg, mgr, logger)
 
 	prices := []models.SpotPriceEntry{
 		{
@@ -156,7 +156,7 @@ func TestGetCurrentPriceMultipleHours(t *testing.T) {
 		SpotPriceRegion: "SE4",
 	}
 
-	service := NewService(cfg, mgr, nil, logger)
+	service := NewService(cfg, mgr, logger)
 
 	now := time.Now()
 	currentHourStart := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 0, 0, 0, now.Location())

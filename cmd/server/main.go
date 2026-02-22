@@ -119,7 +119,7 @@ func main() {
 	}
 
 	// Start Price service
-	priceService := price.NewService(cfg, stateManager, influxDB, logger)
+	priceService := price.NewService(cfg, stateManager, logger)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -131,7 +131,7 @@ func main() {
 
 	// Start Solar service
 	if cfg.SolarEdgeAPIKey != "" && cfg.SolarEdgeSiteID != "" {
-		solarService, err := solar.NewService(cfg, stateManager, influxDB, logger)
+		solarService, err := solar.NewService(cfg, stateManager, logger)
 		if err != nil {
 			logger.Error("Failed to create solar service", "error", err)
 		} else {
