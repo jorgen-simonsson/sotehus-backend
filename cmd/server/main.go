@@ -19,6 +19,7 @@ import (
 	"github.com/jorgen-simonsson/sotehus-backend/internal/services/solar"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/state"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/storage"
+	"github.com/jorgen-simonsson/sotehus-backend/internal/storage/params"
 
 	_ "github.com/jorgen-simonsson/sotehus-backend/docs"
 )
@@ -52,6 +53,14 @@ func main() {
 
 	// Create state manager
 	stateManager := state.NewManager()
+
+	// Create parameter store (SQLite)
+	paramsStore, err := params.NewStore(cfg.SQLiteDBPath, logger)
+	if err != nil {
+		logger.Error("Failed to create parameter store", "error", err)
+		os.Exit(1)
+	}
+	defer paramsStore.Close()
 
 	// Create InfluxDB client (optional - continue if not available)
 	var influxDB *storage.InfluxDBClient
@@ -140,7 +149,7 @@ func main() {
 	}
 
 	// Create HTTP router
-	router := api.NewRouter(stateManager, influxDB, logger)
+	router := api.NewRouter(stateManager, influxDB, paramsStore, logger)
 
 	// Create HTTP server
 	server := &http.Server{

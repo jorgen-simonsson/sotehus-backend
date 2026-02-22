@@ -34,8 +34,13 @@ services:
       # Spot Price Configuration
       - SPOTPRICE_REGION=${SPOTPRICE_REGION:-SE4}
       
+      # SQLite Configuration
+      - SQLITE_DB_PATH=/app/data/params.db
+      
       # Timezone
       - TZ=Europe/Stockholm
     env_file:
       - .env
+    volumes:
+      - ./data:/app/data
     network_mode: host

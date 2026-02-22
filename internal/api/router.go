@@ -6,12 +6,13 @@ import (
 
 	"github.com/jorgen-simonsson/sotehus-backend/internal/state"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/storage"
+	"github.com/jorgen-simonsson/sotehus-backend/internal/storage/params"
 	httpSwagger "github.com/swaggo/http-swagger"
 )
 
 // NewRouter creates a new HTTP router with all routes configured
-func NewRouter(state *state.Manager, influxDB *storage.InfluxDBClient, logger *slog.Logger) http.Handler {
-	handler := NewHandler(state, influxDB, logger)
+func NewRouter(state *state.Manager, influxDB *storage.InfluxDBClient, paramsStore *params.Store, logger *slog.Logger) http.Handler {
+	handler := NewHandler(state, influxDB, paramsStore, logger)
 
 	mux := http.NewServeMux()
 
@@ -22,6 +23,12 @@ func NewRouter(state *state.Manager, influxDB *storage.InfluxDBClient, logger *s
 	mux.HandleFunc("GET /api/energy/consumed", handler.GetEnergyConsumed)
 	mux.HandleFunc("GET /api/energy/sold", handler.GetEnergySold)
 	mux.HandleFunc("GET /health", handler.HealthCheck)
+
+	// Parameter routes
+	mux.HandleFunc("GET /api/params", handler.GetAllParams)
+	mux.HandleFunc("GET /api/params/{key}", handler.GetParamByKey)
+	mux.HandleFunc("POST /api/params", handler.CreateParam)
+	mux.HandleFunc("PUT /api/params/{key}", handler.UpdateParam)
 
 	// Swagger UI
 	mux.Handle("GET /swagger/", httpSwagger.WrapHandler)
@@ -34,7 +41,7 @@ func NewRouter(state *state.Manager, influxDB *storage.InfluxDBClient, logger *s
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
 		if r.Method == "OPTIONS" {

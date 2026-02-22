@@ -2,12 +2,14 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/jorgen-simonsson/sotehus-backend/internal/state"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/storage"
+	"github.com/jorgen-simonsson/sotehus-backend/internal/storage/params"
 )
 
 // APIVersion is the current version of the API
@@ -15,17 +17,19 @@ const APIVersion = "1.2.0"
 
 // Handler holds HTTP handlers
 type Handler struct {
-	state    *state.Manager
-	influxDB *storage.InfluxDBClient
-	logger   *slog.Logger
+	state       *state.Manager
+	influxDB    *storage.InfluxDBClient
+	paramsStore *params.Store
+	logger      *slog.Logger
 }
 
 // NewHandler creates a new API handler
-func NewHandler(state *state.Manager, influxDB *storage.InfluxDBClient, logger *slog.Logger) *Handler {
+func NewHandler(state *state.Manager, influxDB *storage.InfluxDBClient, paramsStore *params.Store, logger *slog.Logger) *Handler {
 	return &Handler{
-		state:    state,
-		influxDB: influxDB,
-		logger:   logger,
+		state:       state,
+		influxDB:    influxDB,
+		paramsStore: paramsStore,
+		logger:      logger,
 	}
 }
 
@@ -305,6 +309,179 @@ func (h *Handler) GetEnergySold(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
+		h.logger.Error("Failed to encode response", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+}
+
+// GetAllParams handles GET /api/params requests
+// @Summary Get all persistent parameters
+// @Description Returns all persistent configuration parameters
+// @Tags parameters
+// @Produce json
+// @Success 200 {array} params.PersistentParam
+// @Failure 500 {string} string "Failed to get parameters"
+// @Router /api/params [get]
+func (h *Handler) GetAllParams(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if h.paramsStore == nil {
+		http.Error(w, "Parameter store not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	allParams, err := h.paramsStore.GetAll()
+	if err != nil {
+		h.logger.Error("Failed to get parameters", "error", err)
+		http.Error(w, "Failed to get parameters", http.StatusInternalServerError)
+		return
+	}
+
+	if err := json.NewEncoder(w).Encode(allParams); err != nil {
+		h.logger.Error("Failed to encode response", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+}
+
+// GetParamByKey handles GET /api/params/{key} requests
+// @Summary Get a parameter by key
+// @Description Returns a single persistent parameter by its key
+// @Tags parameters
+// @Produce json
+// @Param key path string true "Parameter key"
+// @Success 200 {object} params.PersistentParam
+// @Failure 404 {string} string "Parameter not found"
+// @Failure 500 {string} string "Failed to get parameter"
+// @Router /api/params/{key} [get]
+func (h *Handler) GetParamByKey(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if h.paramsStore == nil {
+		http.Error(w, "Parameter store not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	key := r.PathValue("key")
+	if key == "" {
+		http.Error(w, "Missing parameter key", http.StatusBadRequest)
+		return
+	}
+
+	p, err := h.paramsStore.GetByKey(key)
+	if err != nil {
+		if errors.Is(err, params.ErrNotFound) {
+			http.Error(w, "Parameter not found", http.StatusNotFound)
+			return
+		}
+		h.logger.Error("Failed to get parameter", "key", key, "error", err)
+		http.Error(w, "Failed to get parameter", http.StatusInternalServerError)
+		return
+	}
+
+	if err := json.NewEncoder(w).Encode(p); err != nil {
+		h.logger.Error("Failed to encode response", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+}
+
+// CreateParam handles POST /api/params requests
+// @Summary Create a new parameter
+// @Description Creates a new persistent parameter. Returns 409 if the key already exists.
+// @Tags parameters
+// @Accept json
+// @Produce json
+// @Param param body params.CreateParamRequest true "Parameter to create"
+// @Success 201 {object} params.PersistentParam
+// @Failure 400 {string} string "Invalid request body"
+// @Failure 409 {string} string "Parameter with this key already exists"
+// @Failure 500 {string} string "Failed to create parameter"
+// @Router /api/params [post]
+func (h *Handler) CreateParam(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if h.paramsStore == nil {
+		http.Error(w, "Parameter store not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req params.CreateParamRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Key == "" {
+		http.Error(w, "Parameter key is required", http.StatusBadRequest)
+		return
+	}
+
+	p, err := h.paramsStore.Create(req)
+	if err != nil {
+		if errors.Is(err, params.ErrDuplicateKey) {
+			http.Error(w, "Parameter with this key already exists", http.StatusConflict)
+			return
+		}
+		h.logger.Error("Failed to create parameter", "key", req.Key, "error", err)
+		http.Error(w, "Failed to create parameter", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(p); err != nil {
+		h.logger.Error("Failed to encode response", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+}
+
+// UpdateParam handles PUT /api/params/{key} requests
+// @Summary Update an existing parameter
+// @Description Updates the description and content of a parameter identified by key
+// @Tags parameters
+// @Accept json
+// @Produce json
+// @Param key path string true "Parameter key"
+// @Param param body params.UpdateParamRequest true "Updated parameter data"
+// @Success 200 {object} params.PersistentParam
+// @Failure 400 {string} string "Invalid request body"
+// @Failure 404 {string} string "Parameter not found"
+// @Failure 500 {string} string "Failed to update parameter"
+// @Router /api/params/{key} [put]
+func (h *Handler) UpdateParam(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if h.paramsStore == nil {
+		http.Error(w, "Parameter store not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	key := r.PathValue("key")
+	if key == "" {
+		http.Error(w, "Missing parameter key", http.StatusBadRequest)
+		return
+	}
+
+	var req params.UpdateParamRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	p, err := h.paramsStore.Update(key, req)
+	if err != nil {
+		if errors.Is(err, params.ErrNotFound) {
+			http.Error(w, "Parameter not found", http.StatusNotFound)
+			return
+		}
+		h.logger.Error("Failed to update parameter", "key", key, "error", err)
+		http.Error(w, "Failed to update parameter", http.StatusInternalServerError)
+		return
+	}
+
+	if err := json.NewEncoder(w).Encode(p); err != nil {
 		h.logger.Error("Failed to encode response", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return

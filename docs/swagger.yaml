@@ -131,6 +131,45 @@ definitions:
         example: false
         type: boolean
     type: object
+  params.CreateParamRequest:
+    properties:
+      content:
+        example: '{"value": 0.04}'
+        type: string
+      description:
+        example: Dynamic addition to price
+        type: string
+      key:
+        example: DynamicAddPrice
+        type: string
+    type: object
+  params.PersistentParam:
+    properties:
+      changed:
+        example: "2026-01-15T10:30:00+01:00"
+        type: string
+      content:
+        example: '{"value": 0.04}'
+        type: string
+      description:
+        example: Dynamic addition to price
+        type: string
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      key:
+        example: DynamicAddPrice
+        type: string
+    type: object
+  params.UpdateParamRequest:
+    properties:
+      content:
+        example: '{"value": 0.05}'
+        type: string
+      description:
+        example: Dynamic addition to price
+        type: string
+    type: object
 info:
   contact:
     name: API Support
@@ -229,6 +268,125 @@ paths:
       summary: Get sold energy for a period
       tags:
       - energy
+  /api/params:
+    get:
+      description: Returns all persistent configuration parameters
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/params.PersistentParam'
+            type: array
+        "500":
+          description: Failed to get parameters
+          schema:
+            type: string
+      summary: Get all persistent parameters
+      tags:
+      - parameters
+    post:
+      consumes:
+      - application/json
+      description: Creates a new persistent parameter. Returns 409 if the key already
+        exists.
+      parameters:
+      - description: Parameter to create
+        in: body
+        name: param
+        required: true
+        schema:
+          $ref: '#/definitions/params.CreateParamRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/params.PersistentParam'
+        "400":
+          description: Invalid request body
+          schema:
+            type: string
+        "409":
+          description: Parameter with this key already exists
+          schema:
+            type: string
+        "500":
+          description: Failed to create parameter
+          schema:
+            type: string
+      summary: Create a new parameter
+      tags:
+      - parameters
+  /api/params/{key}:
+    get:
+      description: Returns a single persistent parameter by its key
+      parameters:
+      - description: Parameter key
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/params.PersistentParam'
+        "404":
+          description: Parameter not found
+          schema:
+            type: string
+        "500":
+          description: Failed to get parameter
+          schema:
+            type: string
+      summary: Get a parameter by key
+      tags:
+      - parameters
+    put:
+      consumes:
+      - application/json
+      description: Updates the description and content of a parameter identified by
+        key
+      parameters:
+      - description: Parameter key
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: Updated parameter data
+        in: body
+        name: param
+        required: true
+        schema:
+          $ref: '#/definitions/params.UpdateParamRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/params.PersistentParam'
+        "400":
+          description: Invalid request body
+          schema:
+            type: string
+        "404":
+          description: Parameter not found
+          schema:
+            type: string
+        "500":
+          description: Failed to update parameter
+          schema:
+            type: string
+      summary: Update an existing parameter
+      tags:
+      - parameters
   /api/timeseries:
     get:
       description: Returns statistics about the historical data stored in InfluxDB

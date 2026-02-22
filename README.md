@@ -2,6 +2,34 @@
 
 A Go application that provides real-time energy monitoring data via a REST API.
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Swagger UI](#swagger-ui)
+- [API Endpoints](#api-endpoints)
+  - [GET /api/data](#get-apidata)
+  - [GET /api/timeseries](#get-apitimeseries)
+  - [GET /api/version](#get-apiversion)
+  - [GET /api/energy/consumed](#get-apienergyconsumed)
+  - [GET /api/energy/sold](#get-apienergysold)
+  - [GET /health](#get-health)
+- [Persistent Parameters](#persistent-parameters)
+  - [Overview](#parameters-overview)
+  - [Default Parameters](#default-parameters)
+  - [GET /api/params](#get-apiparams)
+  - [GET /api/params/{key}](#get-apiparamskey)
+  - [POST /api/params](#post-apiparams)
+  - [PUT /api/params/{key}](#put-apiparamskey)
+- [Architecture](#architecture)
+  - [Grid Process](#grid-process)
+  - [Price Process](#price-process)
+  - [Solar Process](#solar-process)
+  - [FFR Process](#ffr-process)
+- [Configuration](#configuration)
+- [Project Structure](#project-structure)
+- [Building and Running](#building-and-running)
+- [Testing](#testing)
+
 ## Overview
 
 This backend service aggregates data from multiple sources to provide:
@@ -155,6 +183,138 @@ Health check endpoint.
 }
 ```
 
+## Persistent Parameters
+
+### Parameters Overview
+
+The application includes a persistent parameter store backed by SQLite. Parameters are key-value configuration entries stored in a local database file, allowing runtime configuration that survives restarts.
+
+Each parameter has the following fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID string | Auto-generated unique identifier |
+| `key` | string | Unique key identifying the parameter |
+| `description` | string | Human-readable description |
+| `content` | JSON string | Parameter value as a JSON string |
+| `changed` | timestamp | Last modification time |
+
+The SQLite database is stored at the path configured by `SQLITE_DB_PATH` (default: `./data/params.db`). When running with Docker, a volume mount ensures the database persists across container restarts.
+
+### Default Parameters
+
+The following parameters are automatically seeded on first startup if they don't already exist:
+
+| Key | Description | Default Content |
+|-----|-------------|----------------|
+| `DynamicAddPrice` | Dynamic addition to price | `{"value": 0.04}` |
+| `StaticAddPrice` | Static addition to price | `{"value": 0.06}` |
+
+Default parameters are defined in `internal/storage/params/model.go` and can be extended by adding entries to the `DefaultParams` slice.
+
+### `GET /api/params`
+
+Returns all persistent parameters.
+
+**Response:**
+```json
+[
+    {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "key": "DynamicAddPrice",
+        "description": "Dynamic addition to price",
+        "content": "{\"value\": 0.04}",
+        "changed": "2026-01-15T10:30:00+01:00"
+    },
+    {
+        "id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+        "key": "StaticAddPrice",
+        "description": "Static addition to price",
+        "content": "{\"value\": 0.06}",
+        "changed": "2026-01-15T10:30:00+01:00"
+    }
+]
+```
+
+### `GET /api/params/{key}`
+
+Returns a single parameter by its key.
+
+**Path parameters:**
+- `key` - The parameter key (e.g., `DynamicAddPrice`)
+
+**Response (200):**
+```json
+{
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "key": "DynamicAddPrice",
+    "description": "Dynamic addition to price",
+    "content": "{\"value\": 0.04}",
+    "changed": "2026-01-15T10:30:00+01:00"
+}
+```
+
+**Errors:**
+- `404` - Parameter not found
+
+### `POST /api/params`
+
+Creates a new parameter. Returns `409 Conflict` if a parameter with the same key already exists.
+
+**Request body:**
+```json
+{
+    "key": "MyNewParam",
+    "description": "A custom parameter",
+    "content": "{\"enabled\": true, \"threshold\": 0.5}"
+}
+```
+
+**Response (201):**
+```json
+{
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "key": "MyNewParam",
+    "description": "A custom parameter",
+    "content": "{\"enabled\": true, \"threshold\": 0.5}",
+    "changed": "2026-02-22T14:00:00+01:00"
+}
+```
+
+**Errors:**
+- `400` - Invalid request body or missing key
+- `409` - Parameter with this key already exists
+
+### `PUT /api/params/{key}`
+
+Updates an existing parameter's description and content.
+
+**Path parameters:**
+- `key` - The parameter key to update
+
+**Request body:**
+```json
+{
+    "description": "Updated description",
+    "content": "{\"value\": 0.10}"
+}
+```
+
+**Response (200):**
+```json
+{
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "key": "DynamicAddPrice",
+    "description": "Updated description",
+    "content": "{\"value\": 0.10}",
+    "changed": "2026-02-22T14:05:00+01:00"
+}
+```
+
+**Errors:**
+- `400` - Invalid request body
+- `404` - Parameter not found
+
 ## Architecture
 
 The application runs three background processes alongside the HTTP server:
@@ -233,6 +393,9 @@ SOLAREDGE_SITE_ID=your_site_id
 
 # Spot Price Configuration
 SPOTPRICE_REGION=SE4
+
+# SQLite Configuration
+SQLITE_DB_PATH=./data/params.db
 ```
 
 ## Project Structure
@@ -251,7 +414,7 @@ SPOTPRICE_REGION=SE4
 │   │   └── data.go              # Data structures
 │   ├── services/
 │   │   ├── ffr/
-│   │   │   └── ffr.go            # MQTT subscriber for grid frequency (FFR)
+│   │   │   └── ffr.go           # MQTT subscriber for grid frequency (FFR)
 │   │   ├── grid/
 │   │   │   └── grid.go          # MQTT subscriber for grid consumption
 │   │   ├── price/
@@ -259,9 +422,15 @@ SPOTPRICE_REGION=SE4
 │   │   └── solar/
 │   │       └── solar.go         # SolarEdge API client
 │   ├── storage/
-│   │   └── influxdb.go          # InfluxDB client
+│   │   ├── influxdb.go          # InfluxDB client
+│   │   └── params/
+│   │       ├── errors.go        # Sentinel errors
+│   │       ├── model.go         # Parameter model and defaults
+│   │       └── store.go         # SQLite parameter store
 │   └── state/
 │       └── manager.go           # Thread-safe state management
+├── docker-compose.yml
+├── Dockerfile
 ├── go.mod
 ├── go.sum
 ├── .env.example
@@ -285,6 +454,21 @@ make run
 make dev
 ```
 
+### Docker
+
+```bash
+# Build and start with Docker Compose
+docker compose up --build -d
+
+# View logs
+docker compose logs -f
+
+# Stop
+docker compose down
+```
+
+> **Note:** The `docker-compose.yml` mounts `./data:/app/data` to persist the SQLite parameter database across container restarts.
+
 ## Testing
 
 The project includes comprehensive unit tests for all packages.
@@ -303,6 +487,7 @@ go test -cover ./...
 go test -v ./internal/config
 go test -v ./internal/state
 go test -v ./internal/api
+go test -v ./internal/storage/params
 ```
 
 ### Test Coverage
@@ -312,6 +497,7 @@ go test -v ./internal/api
 | `internal/config` | 100% | Configuration loading and environment variables |
 | `internal/state` | 100% | Thread-safe state management |
 | `internal/api` | ~67% | HTTP handlers, routing, and CORS |
+| `internal/storage/params` | ~90% | SQLite parameter store (in-memory tests) |
 | `internal/services/solar` | ~46% | SolarEdge client and sunrise/sunset calculations |
 | `internal/services/price` | ~30% | Spot price fetching and matching |
 | `internal/services/grid` | ~19% | MQTT subscription (requires broker for full testing) |
