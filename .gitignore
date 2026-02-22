@@ -33,3 +33,4 @@ data/
 # Editor/IDE
 # .idea/
 # .vscode/
+*.code-workspace
