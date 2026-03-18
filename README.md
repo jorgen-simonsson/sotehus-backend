@@ -191,7 +191,7 @@ Returns the API version.
 **Response:**
 ```json
 {
-    "version": "1.4.0"
+    "version": "1.5.0"
 }
 ```
 
@@ -498,7 +498,8 @@ Each entry maps an MQTT topic to an InfluxDB field name. All values are aggregat
 - Parses 4-character payloads (e.g., "5001" → 50.01 Hz)
 - Validates frequency is within expected range (48–52 Hz)
 - Handles high-frequency data (many updates per second) thread-safely
-- The current frequency is included in InfluxDB writes alongside grid power data
+- Frequency values are accumulated between InfluxDB write cycles; the **average** frequency is written to InfluxDB each cycle (not the last value)
+- The API (`/api/data`) returns the same averaged frequency that was last written to InfluxDB
 
 ## Configuration
 
@@ -646,6 +647,12 @@ go test -v ./internal/storage/params
 Note: Some packages have lower coverage because they require external services (MQTT broker, InfluxDB, HTTP APIs) for complete integration testing.
 
 ## Changelog
+
+### 2026-03-18 Ver 1.5.0
+- Frequency values written to InfluxDB are now the **average** of all samples received since the previous write, instead of the last instantaneous value
+- The API (`/api/data`) now returns the same averaged frequency that was last written to InfluxDB
+- Added `GetAndResetAverageFrequency` to state manager for accumulating, averaging, and resetting frequency samples between write cycles
+- Unit tests for frequency averaging logic
 
 ### 2026-02-22 Ver 1.4.0
 - New endpoint: `GET /api/energy/cost` – calculates actual energy cost for a period
