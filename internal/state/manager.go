@@ -15,6 +15,11 @@ type Manager struct {
 	priceData     models.PriceData
 	solarData     models.SolarData
 	frequencyData models.FrequencyData
+
+	// Frequency accumulator for computing average between InfluxDB writes
+	freqSum        float64
+	freqCount      int
+	freqLastUpdate time.Time
 }
 
 // NewManager creates a new state manager with default values
@@ -134,16 +139,39 @@ func (m *Manager) GetSolarData() models.SolarData {
 	return m.solarData
 }
 
-// UpdateFrequency updates the grid frequency data
+// UpdateFrequency accumulates a frequency sample for averaging.
+// The API-visible frequencyData is only updated when GetAndResetAverageFrequency is called.
 func (m *Manager) UpdateFrequency(frequency float64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	m.freqSum += frequency
+	m.freqCount++
+	m.freqLastUpdate = time.Now()
+}
+
+// GetAndResetAverageFrequency computes the average frequency since the last
+// reset, updates the API-visible frequencyData, resets the accumulator, and
+// returns the averaged FrequencyData. Returns Invalid if no samples exist.
+func (m *Manager) GetAndResetAverageFrequency() models.FrequencyData {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.freqCount == 0 {
+		return models.FrequencyData{Valid: false}
+	}
+
+	avg := m.freqSum / float64(m.freqCount)
+	m.freqSum = 0
+	m.freqCount = 0
+
 	m.frequencyData = models.FrequencyData{
 		Valid:      true,
-		Frequency:  frequency,
-		LastUpdate: time.Now(),
+		Frequency:  avg,
+		LastUpdate: m.freqLastUpdate,
 	}
+
+	return m.frequencyData
 }
 
 // GetFrequencyData returns a copy of the current frequency data

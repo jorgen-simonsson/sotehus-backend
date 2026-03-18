@@ -151,17 +151,70 @@ func TestUpdateSolarError(t *testing.T) {
 func TestUpdateFrequency(t *testing.T) {
 	m := NewManager()
 
-	m.UpdateFrequency(50.01)
-
+	// Before any average is computed, API frequency should be invalid
 	frequency := m.GetFrequencyData()
+	if frequency.Valid {
+		t.Error("frequency.Valid should be false before first average")
+	}
+
+	// After accumulating and computing the average, API should reflect it
+	m.UpdateFrequency(50.01)
+	avg := m.GetAndResetAverageFrequency()
+	if !avg.Valid {
+		t.Fatal("average should be valid after update")
+	}
+
+	frequency = m.GetFrequencyData()
 	if !frequency.Valid {
-		t.Error("frequency.Valid should be true after update")
+		t.Error("frequency.Valid should be true after average computed")
 	}
 	if frequency.Frequency != 50.01 {
 		t.Errorf("frequency.Frequency = %f, want %f", frequency.Frequency, 50.01)
 	}
 	if frequency.LastUpdate.IsZero() {
 		t.Error("frequency.LastUpdate should not be zero")
+	}
+}
+
+func TestGetAndResetAverageFrequency(t *testing.T) {
+	m := NewManager()
+
+	// No samples yet — should return invalid
+	avg := m.GetAndResetAverageFrequency()
+	if avg.Valid {
+		t.Error("average should be invalid when no samples accumulated")
+	}
+
+	// Accumulate three samples
+	m.UpdateFrequency(50.00)
+	m.UpdateFrequency(50.02)
+	m.UpdateFrequency(50.04)
+
+	avg = m.GetAndResetAverageFrequency()
+	if !avg.Valid {
+		t.Fatal("average should be valid after updates")
+	}
+	want := 50.02
+	if diff := avg.Frequency - want; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("average frequency = %f, want %f", avg.Frequency, want)
+	}
+	if avg.LastUpdate.IsZero() {
+		t.Error("average LastUpdate should not be zero")
+	}
+
+	// After reset the accumulator should be empty
+	avg = m.GetAndResetAverageFrequency()
+	if avg.Valid {
+		t.Error("average should be invalid after reset")
+	}
+
+	// GetFrequencyData should return the last computed average
+	latest := m.GetFrequencyData()
+	if !latest.Valid {
+		t.Error("GetFrequencyData should still be valid after accumulator reset")
+	}
+	if latest.Frequency != 50.02 {
+		t.Errorf("GetFrequencyData.Frequency = %f, want %f (last average)", latest.Frequency, 50.02)
 	}
 }
 
@@ -173,6 +226,7 @@ func TestGetAPIResponse(t *testing.T) {
 	m.UpdatePrice(0.89)
 	m.UpdateSolar(200.0)
 	m.UpdateFrequency(50.02)
+	m.GetAndResetAverageFrequency() // make frequency visible to API
 
 	response := m.GetAPIResponse()
 
@@ -235,6 +289,9 @@ func TestConcurrentAccess(t *testing.T) {
 	}
 
 	wg.Wait()
+
+	// Compute average so frequency becomes visible to API
+	m.GetAndResetAverageFrequency()
 
 	// Just verify no panic occurred and state is accessible
 	response := m.GetAPIResponse()

@@ -113,12 +113,12 @@ func TestFrequencyParsing(t *testing.T) {
 
 			if valid {
 				stateManager.UpdateFrequency(freq)
-				freqData := stateManager.GetFrequencyData()
-				if !freqData.Valid {
+				avgData := stateManager.GetAndResetAverageFrequency()
+				if !avgData.Valid {
 					t.Error("frequency should be valid after update")
 				}
-				if freqData.Frequency != tt.wantFreq {
-					t.Errorf("frequency = %v, want %v", freqData.Frequency, tt.wantFreq)
+				if avgData.Frequency != tt.wantFreq {
+					t.Errorf("frequency = %v, want %v", avgData.Frequency, tt.wantFreq)
 				}
 			}
 		})

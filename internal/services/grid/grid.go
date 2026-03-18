@@ -348,8 +348,8 @@ func (s *Service) flushToInfluxLocked() {
 		return
 	}
 
-	// Get current frequency from state to include in the write
-	freqData := s.state.GetFrequencyData()
+	// Get average frequency since last write to include in the record
+	freqData := s.state.GetAndResetAverageFrequency()
 	if freqData.Valid && freqData.Frequency > 0 {
 		s.pendingValues["grid_frequency"] = freqData.Frequency
 	}
