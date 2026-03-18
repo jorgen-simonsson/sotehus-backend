@@ -4,6 +4,12 @@ A Go application that provides real-time energy monitoring data via a REST API.
 
 ## Table of Contents
 
+- [System Overview](#system-overview)
+  - [Infrastructure](#infrastructure)
+  - [Data Sources](#data-sources)
+  - [Storage](#storage)
+  - [Frontend](#frontend)
+  - [System Diagram](#system-diagram)
 - [Overview](#overview)
 - [Swagger UI](#swagger-ui)
 - [API Endpoints](#api-endpoints)
@@ -31,6 +37,77 @@ A Go application that provides real-time energy monitoring data via a REST API.
 - [Building and Running](#building-and-running)
 - [Testing](#testing)
 - [Changelog](#changelog)
+
+## System Overview
+
+The Sotehus system monitors and visualizes energy data for a household with solar panels. It collects data from local sensors and external APIs, persists it in a time-series database, and serves it to a frontend application.
+
+### Infrastructure
+
+| Host | Role |
+|------|------|
+| **sotehus-pi5** | Main server running Backend, Frontend (PWA), InfluxDB, and Mosquitto broker as Docker containers |
+| **sotehus-rugged** | Runs the FFR collector service. Also serves as backup target for InfluxDB (via cron job) |
+
+### Data Sources
+
+**Local (via MQTT → Mosquitto broker on sotehus-pi5):**
+
+- **Smart Gateway P1** – A dongle connected to the P1 port of the electrical meter. Emits detailed import/export power, voltage, and current data every 5 seconds over local WiFi. ([smartgateways.se](https://smartgateways.se/))
+- **FFR Sensor** – An Arduino system measuring grid frequency at high precision. Data is sent via serial link to the [ffr-collector](https://github.com/jorgen-simonsson/ffr-collector) service on sotehus-rugged, which converts it to MQTT and publishes to the Mosquitto broker at high rate.
+
+**External APIs:**
+
+- **SolarEdge** (`https://monitoringapi.solaredge.com`) – Current solar production data
+- **Spot prices** (`https://www.elprisetjustnu.se/api/v1/prices`) – Current electricity spot prices
+
+### Storage
+
+- **InfluxDB** – Time-series database for all sensor data, persisted every 5 seconds. Runs as a Docker container on sotehus-pi5. Backups are scheduled via cron to file storage on sotehus-rugged.
+- **SQLite** – Persistent parameter store for configurable price additions, VAT, etc.
+
+### Frontend
+
+The frontend is a PWA ([sotehus-pwa](https://github.com/jorgen-simonsson/sotehus-pwa)) running as a Docker container on sotehus-pi5. It accesses the backend via Tailscale to view data and edit parameters.
+
+### System Diagram
+
+```mermaid
+graph LR
+    subgraph sotehus-rugged
+        FFR_SENSOR["FFR Sensor<br/>(Arduino)"]
+        FFR_COLLECTOR["ffr-collector<br/>(service)"]
+        BACKUP["InfluxDB Backup<br/>(file storage)"]
+    end
+
+    subgraph sotehus-pi5 [sotehus-pi5 Docker]
+        MOSQUITTO["Mosquitto<br/>MQTT Broker"]
+        BACKEND["Backend<br/>(this repo)"]
+        INFLUXDB["InfluxDB"]
+        PWA["Frontend PWA"]
+        SQLITE["SQLite"]
+    end
+
+    subgraph External APIs
+        SOLAREDGE["SolarEdge API"]
+        SPOTPRICE["elprisetjustnu.se"]
+    end
+
+    P1["Smart Gateway P1<br/>(electrical meter)"] -- MQTT / WiFi --> MOSQUITTO
+    FFR_SENSOR -- serial --> FFR_COLLECTOR
+    FFR_COLLECTOR -- MQTT --> MOSQUITTO
+
+    MOSQUITTO -- grid data --> BACKEND
+    MOSQUITTO -- frequency data --> BACKEND
+    SOLAREDGE -- solar production --> BACKEND
+    SPOTPRICE -- spot prices --> BACKEND
+
+    BACKEND -- write every 5s --> INFLUXDB
+    BACKEND -- read/write --> SQLITE
+    INFLUXDB -- cron backup --> BACKUP
+
+    PWA -- REST API via Tailscale --> BACKEND
+```
 
 ## Overview
 
