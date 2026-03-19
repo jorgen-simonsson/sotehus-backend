@@ -39,22 +39,22 @@ func TestLoad(t *testing.T) {
 func TestLoadWithEnvVars(t *testing.T) {
 	// Clear and set environment
 	clearEnv()
-	os.Setenv("SERVER_PORT", "9090")
-	os.Setenv("MQTT_BROKER_HOST", "mqtt.example.com")
-	os.Setenv("MQTT_BROKER_PORT", "1884")
-	os.Setenv("MQTT_USERNAME", "testuser")
-	os.Setenv("MQTT_PASSWORD", "testpass")
-	os.Setenv("MQTT_TOPIC", "test/topic")
-	os.Setenv("INFLUXDB2_HOST", "influx.example.com")
-	os.Setenv("INFLUXDB2_PORT", "8087")
-	os.Setenv("INFLUXDB2_USER", "admin")
-	os.Setenv("INFLUXDB2_PASSWORD", "secret")
-	os.Setenv("INFLUXDB2_ORG", "myorg")
-	os.Setenv("INFLUXDB2_BUCKET", "mybucket")
-	os.Setenv("INFLUXDB2_TOKEN", "mytoken")
-	os.Setenv("SOLAREDGE_API_KEY", "apikey123")
-	os.Setenv("SOLAREDGE_SITE_ID", "site456")
-	os.Setenv("SPOTPRICE_REGION", "SE3")
+	t.Setenv("SERVER_PORT", "9090")
+	t.Setenv("MQTT_BROKER_HOST", "mqtt.example.com")
+	t.Setenv("MQTT_BROKER_PORT", "1884")
+	t.Setenv("MQTT_USERNAME", "testuser")
+	t.Setenv("MQTT_PASSWORD", "testpass")
+	t.Setenv("MQTT_TOPIC", "test/topic")
+	t.Setenv("INFLUXDB2_HOST", "influx.example.com")
+	t.Setenv("INFLUXDB2_PORT", "8087")
+	t.Setenv("INFLUXDB2_USER", "admin")
+	t.Setenv("INFLUXDB2_PASSWORD", "secret")
+	t.Setenv("INFLUXDB2_ORG", "myorg")
+	t.Setenv("INFLUXDB2_BUCKET", "mybucket")
+	t.Setenv("INFLUXDB2_TOKEN", "mytoken")
+	t.Setenv("SOLAREDGE_API_KEY", "apikey123")
+	t.Setenv("SOLAREDGE_SITE_ID", "site456")
+	t.Setenv("SPOTPRICE_REGION", "SE3")
 
 	defer clearEnv()
 
@@ -108,8 +108,7 @@ func TestGetEnvOrDefault(t *testing.T) {
 	}
 
 	// Test with existing env var
-	os.Setenv("TEST_VAR", "value")
-	defer os.Unsetenv("TEST_VAR")
+	t.Setenv("TEST_VAR", "value")
 
 	result = getEnvOrDefault("TEST_VAR", "default")
 	if result != "value" {
@@ -117,8 +116,7 @@ func TestGetEnvOrDefault(t *testing.T) {
 	}
 
 	// Test with empty env var
-	os.Setenv("EMPTY_VAR", "")
-	defer os.Unsetenv("EMPTY_VAR")
+	t.Setenv("EMPTY_VAR", "")
 
 	result = getEnvOrDefault("EMPTY_VAR", "default")
 	if result != "default" {
@@ -136,8 +134,7 @@ func TestGetEnvAsInt(t *testing.T) {
 	}
 
 	// Test with valid int
-	os.Setenv("TEST_INT", "123")
-	defer os.Unsetenv("TEST_INT")
+	t.Setenv("TEST_INT", "123")
 
 	result = getEnvAsInt("TEST_INT", 42)
 	if result != 123 {
@@ -145,8 +142,7 @@ func TestGetEnvAsInt(t *testing.T) {
 	}
 
 	// Test with invalid int
-	os.Setenv("INVALID_INT", "not_a_number")
-	defer os.Unsetenv("INVALID_INT")
+	t.Setenv("INVALID_INT", "not_a_number")
 
 	result = getEnvAsInt("INVALID_INT", 42)
 	if result != 42 {
