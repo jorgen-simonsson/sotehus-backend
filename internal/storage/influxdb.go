@@ -307,11 +307,12 @@ func (c *InfluxDBClient) Close() {
 	c.client.Close()
 }
 
-// TimeFieldRecord represents a single InfluxDB record with spot_price and grid_enery_consumed_ack fields.
+// TimeFieldRecord represents a single InfluxDB record with spot_price, grid_enery_consumed_ack and grid_enery_sold_ack fields.
 type TimeFieldRecord struct {
 	Time        time.Time       `json:"time"`
 	SpotPrice   decimal.Decimal `json:"spot_price"`
 	ConsumedAck decimal.Decimal `json:"consumed_ack"`
+	SoldAck     decimal.Decimal `json:"sold_ack"`
 }
 
 // GetFieldsInRange returns time-ordered records with spot_price and grid_enery_consumed_ack
@@ -328,7 +329,7 @@ func (c *InfluxDBClient) GetFieldsInRange(start, stop time.Time) ([]TimeFieldRec
 		from(bucket: "%s")
 		|> range(start: %s, stop: %s)
 		|> filter(fn: (r) => r._measurement == "power_monitoring")
-		|> filter(fn: (r) => r._field == "spot_price" or r._field == "grid_enery_consumed_ack")
+		|> filter(fn: (r) => r._field == "spot_price" or r._field == "grid_enery_consumed_ack" or r._field == "grid_enery_sold_ack")
 		|> fill(usePrevious: true)
 		|> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
 		|> filter(fn: (r) => exists r.grid_enery_consumed_ack and exists r.spot_price)
@@ -344,7 +345,7 @@ func (c *InfluxDBClient) GetFieldsInRange(start, stop time.Time) ([]TimeFieldRec
 	for result.Next() {
 		record := result.Record()
 
-		var spotPrice, consumedAck decimal.Decimal
+		var spotPrice, consumedAck, soldAck decimal.Decimal
 
 		if v, ok := record.ValueByKey("spot_price").(float64); ok {
 			spotPrice = decimal.NewFromFloat(v)
@@ -352,11 +353,15 @@ func (c *InfluxDBClient) GetFieldsInRange(start, stop time.Time) ([]TimeFieldRec
 		if v, ok := record.ValueByKey("grid_enery_consumed_ack").(float64); ok {
 			consumedAck = decimal.NewFromFloat(v)
 		}
+		if v, ok := record.ValueByKey("grid_enery_sold_ack").(float64); ok {
+			soldAck = decimal.NewFromFloat(v)
+		}
 
 		records = append(records, TimeFieldRecord{
 			Time:        record.Time(),
 			SpotPrice:   spotPrice,
 			ConsumedAck: consumedAck,
+			SoldAck:     soldAck,
 		})
 	}
 	if result.Err() != nil {

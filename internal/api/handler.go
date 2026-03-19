@@ -475,6 +475,7 @@ type EnergyCostBlock struct {
 	AddedPrices float64 `json:"added_prices" example:"0.70"`
 	TotalPrice  float64 `json:"total_price" example:"1.15"`
 	ConsumedKWh float64 `json:"consumed_kwh" example:"12.34"`
+	ProducedKWh float64 `json:"produced_kwh" example:"1.50"`
 	Cost        float64 `json:"cost" example:"14.22"`
 	Start       string  `json:"start" example:"2026-02-22T00:00:00+01:00"`
 	Stop        string  `json:"stop" example:"2026-02-22T01:00:00+01:00"`
@@ -482,14 +483,16 @@ type EnergyCostBlock struct {
 
 // EnergyCostResponse represents the response for /api/energy/cost
 type EnergyCostResponse struct {
-	PeriodStart      string            `json:"period_start" example:"2026-02-22T00:00:00+01:00"`
-	PeriodStop       string            `json:"period_stop" example:"2026-02-22T12:00:00+01:00"`
-	TotalConsumedKWh float64           `json:"total_consumed_kwh" example:"156.78"`
-	CostBeforeVAT    float64           `json:"cost_before_vat" example:"180.73"`
-	VATPercent       float64           `json:"vat_percent" example:"25"`
-	TotalCost        float64           `json:"total_cost" example:"225.91"`
-	Unit             string            `json:"unit" example:"SEK"`
-	Blocks           []EnergyCostBlock `json:"blocks"`
+	PeriodStart       string            `json:"period_start" example:"2026-02-22T00:00:00+01:00"`
+	PeriodStop        string            `json:"period_stop" example:"2026-02-22T12:00:00+01:00"`
+	TotalConsumedKWh  float64           `json:"total_consumed_kwh" example:"156.78"`
+	TotalProducedKWh  float64           `json:"total_produced_kwh" example:"23.45"`
+	CostBeforeVAT     float64           `json:"cost_before_vat" example:"180.73"`
+	VATPercent        float64           `json:"vat_percent" example:"25"`
+	ProductionBenefit float64           `json:"production_benefit" example:"5.67"`
+	TotalCost         float64           `json:"total_cost" example:"220.24"`
+	Unit              string            `json:"unit" example:"SEK"`
+	Blocks            []EnergyCostBlock `json:"blocks"`
 }
 
 // GetEnergyCost handles GET /api/energy/cost requests
@@ -582,14 +585,16 @@ func (h *Handler) GetEnergyCost(w http.ResponseWriter, r *http.Request) {
 	// If no records, return zero-cost response
 	if len(records) == 0 {
 		response := EnergyCostResponse{
-			PeriodStart:      startTime.Format(time.RFC3339),
-			PeriodStop:       stopTime.Format(time.RFC3339),
-			TotalConsumedKWh: 0,
-			CostBeforeVAT:    0,
-			VATPercent:       vatPercent.InexactFloat64(),
-			TotalCost:        0,
-			Unit:             "SEK",
-			Blocks:           []EnergyCostBlock{},
+			PeriodStart:       startTime.Format(time.RFC3339),
+			PeriodStop:        stopTime.Format(time.RFC3339),
+			TotalConsumedKWh:  0,
+			TotalProducedKWh:  0,
+			CostBeforeVAT:     0,
+			VATPercent:        vatPercent.InexactFloat64(),
+			ProductionBenefit: 0,
+			TotalCost:         0,
+			Unit:              "SEK",
+			Blocks:            []EnergyCostBlock{},
 		}
 
 		if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -599,29 +604,55 @@ func (h *Handler) GetEnergyCost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fetch production benefit parameters
+	gridBenefit, err := h.fetchParamValue("grid_benefit")
+	if err != nil {
+		h.logger.Error("Failed to fetch grid_benefit parameter", "error", err)
+		http.Error(w, "Failed to fetch grid_benefit parameter: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	eonAdded, err := h.fetchParamValue("eon_added")
+	if err != nil {
+		h.logger.Error("Failed to fetch eon_added parameter", "error", err)
+		http.Error(w, "Failed to fetch eon_added parameter: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	// Group records into blocks of constant spot_price and calculate costs
 	blocks := h.calculateCostBlocks(records, addPrices)
 
 	// Sum totals using decimal
 	totalConsumed := decimal.Zero
+	totalProduced := decimal.Zero
 	costBeforeVAT := decimal.Zero
+	productionBenefit := decimal.Zero
 	for _, b := range blocks {
 		totalConsumed = totalConsumed.Add(decimal.NewFromFloat(b.ConsumedKWh))
+		totalProduced = totalProduced.Add(decimal.NewFromFloat(b.ProducedKWh))
 		costBeforeVAT = costBeforeVAT.Add(decimal.NewFromFloat(b.Cost))
+
+		// Production benefit per block: (spot_price + grid_benefit + eon_added) * produced_kwh
+		blockProduced := decimal.NewFromFloat(b.ProducedKWh)
+		blockSpot := decimal.NewFromFloat(b.SpotPrice)
+		blockDecrease := blockSpot.Add(gridBenefit).Add(eonAdded).Mul(blockProduced)
+		productionBenefit = productionBenefit.Add(blockDecrease)
 	}
 
 	vatMultiplier := decimal.NewFromInt(1).Add(vatPercent.Div(decimal.NewFromInt(100)))
-	totalCost := costBeforeVAT.Mul(vatMultiplier).Round(2)
+	totalCost := costBeforeVAT.Mul(vatMultiplier).Sub(productionBenefit).Round(2)
 
 	response := EnergyCostResponse{
-		PeriodStart:      startTime.Format(time.RFC3339),
-		PeriodStop:       stopTime.Format(time.RFC3339),
-		TotalConsumedKWh: totalConsumed.Round(2).InexactFloat64(),
-		CostBeforeVAT:    costBeforeVAT.Round(2).InexactFloat64(),
-		VATPercent:       vatPercent.InexactFloat64(),
-		TotalCost:        totalCost.InexactFloat64(),
-		Unit:             "SEK",
-		Blocks:           blocks,
+		PeriodStart:       startTime.Format(time.RFC3339),
+		PeriodStop:        stopTime.Format(time.RFC3339),
+		TotalConsumedKWh:  totalConsumed.Round(2).InexactFloat64(),
+		TotalProducedKWh:  totalProduced.Round(2).InexactFloat64(),
+		CostBeforeVAT:     costBeforeVAT.Round(2).InexactFloat64(),
+		VATPercent:        vatPercent.InexactFloat64(),
+		ProductionBenefit: productionBenefit.Round(2).InexactFloat64(),
+		TotalCost:         totalCost.InexactFloat64(),
+		Unit:              "SEK",
+		Blocks:            blocks,
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -659,7 +690,7 @@ func (h *Handler) fetchAddPrices() (decimal.Decimal, error) {
 }
 
 // calculateCostBlocks groups time-ordered records into blocks of constant spot_price
-// and calculates the energy consumed and cost for each block.
+// and calculates the energy consumed, produced, and cost for each block.
 // All arithmetic is performed with decimal.Decimal; final values are rounded to 2 decimal places.
 func (h *Handler) calculateCostBlocks(records []storage.TimeFieldRecord, addPrices decimal.Decimal) []EnergyCostBlock {
 	if len(records) == 0 {
@@ -678,6 +709,7 @@ func (h *Handler) calculateCostBlocks(records []storage.TimeFieldRecord, addPric
 			lastRec := records[i-1]
 
 			consumedKWh := lastRec.ConsumedAck.Sub(firstRec.ConsumedAck)
+			producedKWh := lastRec.SoldAck.Sub(firstRec.SoldAck)
 			totalPrice := currentPrice.Add(addPrices)
 			cost := consumedKWh.Mul(totalPrice)
 
@@ -686,6 +718,7 @@ func (h *Handler) calculateCostBlocks(records []storage.TimeFieldRecord, addPric
 				AddedPrices: addPrices.Round(2).InexactFloat64(),
 				TotalPrice:  totalPrice.Round(2).InexactFloat64(),
 				ConsumedKWh: consumedKWh.Round(2).InexactFloat64(),
+				ProducedKWh: producedKWh.Round(2).InexactFloat64(),
 				Cost:        cost.Round(2).InexactFloat64(),
 				Start:       firstRec.Time.Format(time.RFC3339),
 				Stop:        lastRec.Time.Format(time.RFC3339),
