@@ -271,8 +271,8 @@ func TestGetAllParams(t *testing.T) {
 		t.Fatalf("Failed to unmarshal response: %v", err)
 	}
 
-	if len(result) != 5 {
-		t.Fatalf("Expected 5 default params, got %d", len(result))
+	if len(result) != 8 {
+		t.Fatalf("Expected 8 default params, got %d", len(result))
 	}
 
 	keys := make(map[string]bool)
@@ -372,8 +372,8 @@ func TestCreateParam_Success(t *testing.T) {
 	if err := json.Unmarshal(recAll.Body.Bytes(), &allParams); err != nil {
 		t.Fatalf("Failed to unmarshal response: %v", err)
 	}
-	if len(allParams) != 6 {
-		t.Errorf("Expected 6 params after create, got %d", len(allParams))
+	if len(allParams) != 9 {
+		t.Errorf("Expected 9 params after create, got %d", len(allParams))
 	}
 }
 
@@ -800,9 +800,9 @@ func TestCalculateCostBlocks_SinglePrice(t *testing.T) {
 
 	now := time.Now()
 	records := []storage.TimeFieldRecord{
-		{Time: now, SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(100.0)},
-		{Time: now.Add(1 * time.Minute), SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(100.5)},
-		{Time: now.Add(2 * time.Minute), SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(101.0)},
+		{Time: now, SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(100.0), SoldAck: decimal.NewFromFloat(10.0)},
+		{Time: now.Add(1 * time.Minute), SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(100.5), SoldAck: decimal.NewFromFloat(10.2)},
+		{Time: now.Add(2 * time.Minute), SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(101.0), SoldAck: decimal.NewFromFloat(10.5)},
 	}
 
 	addPrices := decimal.NewFromFloat(0.70) // sum of all add prices
@@ -820,6 +820,9 @@ func TestCalculateCostBlocks_SinglePrice(t *testing.T) {
 	if b.ConsumedKWh != 1.0 {
 		t.Errorf("ConsumedKWh = %f, want %f", b.ConsumedKWh, 1.0)
 	}
+	if b.ProducedKWh != 0.5 {
+		t.Errorf("ProducedKWh = %f, want %f", b.ProducedKWh, 0.5)
+	}
 	if b.Cost != 1.2 {
 		t.Errorf("Cost = %f, want %f", b.Cost, 1.2)
 	}
@@ -836,15 +839,15 @@ func TestCalculateCostBlocks_MultiplePrices(t *testing.T) {
 	now := time.Now()
 	records := []storage.TimeFieldRecord{
 		// Block 1: price 0.50, 3 records
-		{Time: now, SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(100.0)},
-		{Time: now.Add(1 * time.Minute), SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(102.0)},
-		{Time: now.Add(2 * time.Minute), SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(105.0)},
+		{Time: now, SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(100.0), SoldAck: decimal.NewFromFloat(10.0)},
+		{Time: now.Add(1 * time.Minute), SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(102.0), SoldAck: decimal.NewFromFloat(10.5)},
+		{Time: now.Add(2 * time.Minute), SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(105.0), SoldAck: decimal.NewFromFloat(11.0)},
 		// Block 2: price 0.80, 2 records
-		{Time: now.Add(3 * time.Minute), SpotPrice: decimal.NewFromFloat(0.80), ConsumedAck: decimal.NewFromFloat(105.5)},
-		{Time: now.Add(4 * time.Minute), SpotPrice: decimal.NewFromFloat(0.80), ConsumedAck: decimal.NewFromFloat(108.0)},
+		{Time: now.Add(3 * time.Minute), SpotPrice: decimal.NewFromFloat(0.80), ConsumedAck: decimal.NewFromFloat(105.5), SoldAck: decimal.NewFromFloat(11.0)},
+		{Time: now.Add(4 * time.Minute), SpotPrice: decimal.NewFromFloat(0.80), ConsumedAck: decimal.NewFromFloat(108.0), SoldAck: decimal.NewFromFloat(11.5)},
 		// Block 3: price 0.30, 2 records
-		{Time: now.Add(5 * time.Minute), SpotPrice: decimal.NewFromFloat(0.30), ConsumedAck: decimal.NewFromFloat(108.5)},
-		{Time: now.Add(6 * time.Minute), SpotPrice: decimal.NewFromFloat(0.30), ConsumedAck: decimal.NewFromFloat(110.0)},
+		{Time: now.Add(5 * time.Minute), SpotPrice: decimal.NewFromFloat(0.30), ConsumedAck: decimal.NewFromFloat(108.5), SoldAck: decimal.NewFromFloat(11.5)},
+		{Time: now.Add(6 * time.Minute), SpotPrice: decimal.NewFromFloat(0.30), ConsumedAck: decimal.NewFromFloat(110.0), SoldAck: decimal.NewFromFloat(12.0)},
 	}
 
 	addPrices := decimal.NewFromFloat(0.50)
@@ -854,25 +857,34 @@ func TestCalculateCostBlocks_MultiplePrices(t *testing.T) {
 		t.Fatalf("Expected 3 blocks, got %d", len(blocks))
 	}
 
-	// Block 1: 105.0 - 100.0 = 5.0 kWh, price = 0.50 + 0.50 = 1.00, cost = 5.00
+	// Block 1: 105.0 - 100.0 = 5.0 kWh consumed, 11.0 - 10.0 = 1.0 kWh produced
 	if blocks[0].ConsumedKWh != 5.0 {
 		t.Errorf("Block 0 ConsumedKWh = %f, want %f", blocks[0].ConsumedKWh, 5.0)
+	}
+	if blocks[0].ProducedKWh != 1.0 {
+		t.Errorf("Block 0 ProducedKWh = %f, want %f", blocks[0].ProducedKWh, 1.0)
 	}
 	if blocks[0].Cost != 5.0 {
 		t.Errorf("Block 0 Cost = %f, want %f", blocks[0].Cost, 5.0)
 	}
 
-	// Block 2: 108.0 - 105.5 = 2.5 kWh, price = 0.80 + 0.50 = 1.30, cost = 3.25
+	// Block 2: 108.0 - 105.5 = 2.5 kWh consumed, 11.5 - 11.0 = 0.5 kWh produced
 	if blocks[1].ConsumedKWh != 2.5 {
 		t.Errorf("Block 1 ConsumedKWh = %f, want %f", blocks[1].ConsumedKWh, 2.5)
+	}
+	if blocks[1].ProducedKWh != 0.5 {
+		t.Errorf("Block 1 ProducedKWh = %f, want %f", blocks[1].ProducedKWh, 0.5)
 	}
 	if blocks[1].Cost != 3.25 {
 		t.Errorf("Block 1 Cost = %f, want %f", blocks[1].Cost, 3.25)
 	}
 
-	// Block 3: 110.0 - 108.5 = 1.5 kWh, price = 0.30 + 0.50 = 0.80, cost = 1.20
+	// Block 3: 110.0 - 108.5 = 1.5 kWh consumed, 12.0 - 11.5 = 0.5 kWh produced
 	if blocks[2].ConsumedKWh != 1.5 {
 		t.Errorf("Block 2 ConsumedKWh = %f, want %f", blocks[2].ConsumedKWh, 1.5)
+	}
+	if blocks[2].ProducedKWh != 0.5 {
+		t.Errorf("Block 2 ProducedKWh = %f, want %f", blocks[2].ProducedKWh, 0.5)
 	}
 	if blocks[2].Cost != 1.2 {
 		t.Errorf("Block 2 Cost = %f, want %f", blocks[2].Cost, 1.2)
@@ -885,7 +897,7 @@ func TestCalculateCostBlocks_SingleRecord(t *testing.T) {
 	handler := NewHandler(mgr, nil, nil, logger)
 
 	records := []storage.TimeFieldRecord{
-		{Time: time.Now(), SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(100.0)},
+		{Time: time.Now(), SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(100.0), SoldAck: decimal.NewFromFloat(10.0)},
 	}
 
 	blocks := handler.calculateCostBlocks(records, decimal.NewFromFloat(0.70))
@@ -893,9 +905,12 @@ func TestCalculateCostBlocks_SingleRecord(t *testing.T) {
 	if len(blocks) != 1 {
 		t.Fatalf("Expected 1 block, got %d", len(blocks))
 	}
-	// Single record means 0 kWh consumed (same first and last)
+	// Single record means 0 kWh consumed and 0 kWh produced (same first and last)
 	if blocks[0].ConsumedKWh != 0 {
 		t.Errorf("ConsumedKWh = %f, want 0", blocks[0].ConsumedKWh)
+	}
+	if blocks[0].ProducedKWh != 0 {
+		t.Errorf("ProducedKWh = %f, want 0", blocks[0].ProducedKWh)
 	}
 	if blocks[0].Cost != 0 {
 		t.Errorf("Cost = %f, want 0", blocks[0].Cost)
@@ -919,6 +934,93 @@ func TestFetchAddPrices_WithDefaults(t *testing.T) {
 	expected := decimal.NewFromFloat(0.2584).Add(decimal.NewFromFloat(0.36)).Add(decimal.NewFromFloat(0.0442)).Add(decimal.NewFromFloat(0.04))
 	if !addPrices.Equal(expected) {
 		t.Errorf("addPrices = %s, want %s", addPrices, expected)
+	}
+}
+
+func TestProductionBenefit(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	store := newTestParamsStore(t)
+	handler := NewHandler(mgr, nil, store, logger)
+
+	now := time.Now()
+	records := []storage.TimeFieldRecord{
+		// Block 1: spot 0.50, consumed 5 kWh, produced 1 kWh
+		{Time: now, SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(100.0), SoldAck: decimal.NewFromFloat(10.0)},
+		{Time: now.Add(1 * time.Minute), SpotPrice: decimal.NewFromFloat(0.50), ConsumedAck: decimal.NewFromFloat(105.0), SoldAck: decimal.NewFromFloat(11.0)},
+		// Block 2: spot 0.80, consumed 3 kWh, produced 0.5 kWh
+		{Time: now.Add(2 * time.Minute), SpotPrice: decimal.NewFromFloat(0.80), ConsumedAck: decimal.NewFromFloat(105.0), SoldAck: decimal.NewFromFloat(11.0)},
+		{Time: now.Add(3 * time.Minute), SpotPrice: decimal.NewFromFloat(0.80), ConsumedAck: decimal.NewFromFloat(108.0), SoldAck: decimal.NewFromFloat(11.5)},
+	}
+
+	// Fetch the same params the handler uses
+	addPrices, err := handler.fetchAddPrices()
+	if err != nil {
+		t.Fatalf("fetchAddPrices: %v", err)
+	}
+	vatPercent, err := handler.fetchParamValue("VAT")
+	if err != nil {
+		t.Fatalf("fetchParamValue(VAT): %v", err)
+	}
+	gridBenefit, err := handler.fetchParamValue("grid_benefit")
+	if err != nil {
+		t.Fatalf("fetchParamValue(grid_benefit): %v", err)
+	}
+	eonAdded, err := handler.fetchParamValue("eon_added")
+	if err != nil {
+		t.Fatalf("fetchParamValue(eon_added): %v", err)
+	}
+
+	blocks := handler.calculateCostBlocks(records, addPrices)
+	if len(blocks) != 2 {
+		t.Fatalf("Expected 2 blocks, got %d", len(blocks))
+	}
+
+	// Replicate the GetEnergyCost summation logic
+	totalConsumed := decimal.Zero
+	totalProduced := decimal.Zero
+	costBeforeVAT := decimal.Zero
+	productionBenefit := decimal.Zero
+	for _, b := range blocks {
+		totalConsumed = totalConsumed.Add(decimal.NewFromFloat(b.ConsumedKWh))
+		totalProduced = totalProduced.Add(decimal.NewFromFloat(b.ProducedKWh))
+		costBeforeVAT = costBeforeVAT.Add(decimal.NewFromFloat(b.Cost))
+
+		blockProduced := decimal.NewFromFloat(b.ProducedKWh)
+		blockSpot := decimal.NewFromFloat(b.SpotPrice)
+		blockDecrease := blockSpot.Add(gridBenefit).Add(eonAdded).Mul(blockProduced)
+		productionBenefit = productionBenefit.Add(blockDecrease)
+	}
+	vatMultiplier := decimal.NewFromInt(1).Add(vatPercent.Div(decimal.NewFromInt(100)))
+	totalCost := costBeforeVAT.Mul(vatMultiplier).Sub(productionBenefit).Round(2)
+
+	// Verify totals
+	if !totalConsumed.Equal(decimal.NewFromFloat(8.0)) {
+		t.Errorf("totalConsumed = %s, want 8.0", totalConsumed)
+	}
+	if !totalProduced.Equal(decimal.NewFromFloat(1.5)) {
+		t.Errorf("totalProduced = %s, want 1.5", totalProduced)
+	}
+
+	// Block1 decrease: (0.50 + 0.0844 + 0.02) * 1.0 = 0.6044
+	// Block2 decrease: (0.80 + 0.0844 + 0.02) * 0.5 = 0.4522
+	// Total production benefit: 1.0566
+	expectedBenefit := decimal.NewFromFloat(0.50).Add(gridBenefit).Add(eonAdded).Mul(decimal.NewFromFloat(1.0)).
+		Add(decimal.NewFromFloat(0.80).Add(gridBenefit).Add(eonAdded).Mul(decimal.NewFromFloat(0.5)))
+	if !productionBenefit.Equal(expectedBenefit) {
+		t.Errorf("productionBenefit = %s, want %s", productionBenefit, expectedBenefit)
+	}
+
+	// total_cost = costBeforeVAT * 1.25 - productionBenefit
+	expectedTotalCost := costBeforeVAT.Mul(vatMultiplier).Sub(productionBenefit).Round(2)
+	if !totalCost.Equal(expectedTotalCost) {
+		t.Errorf("totalCost = %s, want %s", totalCost, expectedTotalCost)
+	}
+
+	// Verify production benefit is subtracted (without VAT)
+	costWithVAT := costBeforeVAT.Mul(vatMultiplier)
+	if totalCost.GreaterThanOrEqual(costWithVAT) {
+		t.Error("totalCost should be less than costBeforeVAT*vatMultiplier when production > 0")
 	}
 }
 

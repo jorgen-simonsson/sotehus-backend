@@ -37,6 +37,9 @@ var DefaultParams = []PersistentParam{
 	{Key: "DynamicAddPrice", Description: "Dynamic addition to price", Content: `{"value": 0.0442}`},
 	{Key: "StaticAddPrice", Description: "Static addition to price", Content: `{"value": 0.04}`},
 	{Key: "VAT", Description: "VAT percent", Content: `{"value": 25}`},
+	{Key: "grid_benefit", Description: "Grid production benefit", Content: `{"value": 0.0844}`},
+	{Key: "eon_added", Description: "EON production addition", Content: `{"value": 0.02}`},
+	{Key: "location_name", Description: "Location name", Content: `{"value": "Sotehus"}`},
 }
 
 // ParseContentValue extracts the numeric "value" field from a parameter's JSON content string.

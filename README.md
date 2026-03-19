@@ -191,7 +191,7 @@ Returns the API version.
 **Response:**
 ```json
 {
-    "version": "1.5.0"
+    "version": "1.6.0"
 }
 ```
 
@@ -255,7 +255,9 @@ Returns the energy sold (exported to grid) in kWh between two timestamps.
 
 Returns the actual energy cost for a period, broken down by spot-price blocks.
 
-The endpoint queries InfluxDB for `spot_price` and consumed-energy accumulator readings in the requested time range, groups consecutive records that share the same spot price into blocks, and computes per-block kWh and cost. Configured price additions (transfer fee, energy tax, dynamic and static additions) are added on top of the spot price for each block. Finally, VAT is applied to the total.
+The endpoint queries InfluxDB for `spot_price`, consumed-energy and sold-energy accumulator readings in the requested time range, groups consecutive records that share the same spot price into blocks, and computes per-block kWh and cost. Configured price additions (transfer fee, energy tax, dynamic and static additions) are added on top of the spot price for each block. VAT is applied to the consumption cost total. A production benefit is then subtracted from the VAT-inclusive total — VAT is **not** applied to the production benefit.
+
+The production benefit per block is calculated as `(spot_price + grid_benefit + eon_added) × produced_kwh`. The sum of all block decreases is subtracted from the final cost: `total_cost = cost_before_vat × (1 + vat/100) − production_benefit`.
 
 If no spot price is recorded for a given time window, the most recent previous value is carried forward (InfluxDB `fill(usePrevious: true)`).
 
@@ -269,9 +271,11 @@ If no spot price is recorded for a given time window, the most recent previous v
     "period_start": "2026-02-01T00:00:00+01:00",
     "period_stop": "2026-02-21T00:00:00+01:00",
     "total_consumed_kwh": 156.78,
+    "total_produced_kwh": 23.45,
     "cost_before_vat": 180.73,
     "vat_percent": 25,
-    "total_cost": 225.91,
+    "production_benefit": 5.67,
+    "total_cost": 220.24,
     "unit": "SEK",
     "blocks": [
         {
@@ -279,6 +283,7 @@ If no spot price is recorded for a given time window, the most recent previous v
             "added_prices": 0.7026,
             "total_price": 1.1526,
             "consumed_kwh": 12.34,
+            "produced_kwh": 1.50,
             "cost": 14.22,
             "start": "2026-02-01T00:00:00+01:00",
             "stop": "2026-02-01T01:00:00+01:00"
@@ -290,14 +295,17 @@ If no spot price is recorded for a given time window, the most recent previous v
 **Field descriptions:**
 - `period_start` / `period_stop` – Requested time range
 - `total_consumed_kwh` – Total energy consumed in the period (kWh)
+- `total_produced_kwh` – Total energy sold back to the grid in the period (kWh)
 - `cost_before_vat` – Sum of all block costs before VAT (SEK)
 - `vat_percent` – VAT percentage applied (from persistent parameters)
-- `total_cost` – Final cost including VAT (SEK)
+- `production_benefit` – Total cost reduction from solar production (SEK, no VAT applied)
+- `total_cost` – Final cost: `cost_before_vat × (1 + vat/100) − production_benefit` (SEK)
 - `blocks` – Array of per-price-block breakdowns:
   - `spot_price` – Spot price during this block (SEK/kWh)
   - `added_prices` – Sum of transfer, energy tax, dynamic and static additions (SEK/kWh)
   - `total_price` – `spot_price + added_prices` (SEK/kWh)
   - `consumed_kwh` – Energy consumed in this block (kWh)
+  - `produced_kwh` – Energy sold back to the grid in this block (kWh)
   - `cost` – `consumed_kwh × total_price` (SEK, before VAT)
   - `start` / `stop` – Time boundaries of this block
 
@@ -346,6 +354,9 @@ The following parameters are automatically seeded on first startup if they don't
 | `DynamicAddPrice` | Dynamic addition to price | `{"value": 0.0442}` |
 | `StaticAddPrice` | Static addition to price | `{"value": 0.04}` |
 | `VAT` | VAT percent | `{"value": 25}` |
+| `grid_benefit` | Grid production benefit | `{"value": 0.0844}` |
+| `eon_added` | EON production addition | `{"value": 0.02}` |
+| `location_name` | Location name | `{"value": "Sotehus"}` |
 
 Default parameters are defined in `internal/storage/params/model.go` and can be extended by adding entries to the `DefaultParams` slice.
 
@@ -647,6 +658,15 @@ go test -v ./internal/storage/params
 Note: Some packages have lower coverage because they require external services (MQTT broker, InfluxDB, HTTP APIs) for complete integration testing.
 
 ## Changelog
+
+### 2026-03-19 Ver 1.6.0
+- Added **production benefit** to `GET /api/energy/cost` endpoint
+  - Calculates per-block decrease: `(spot_price + grid_benefit + eon_added) × produced_kwh`
+  - Subtracts total production benefit from VAT-inclusive cost (VAT is not applied to the benefit)
+  - New response fields: `total_produced_kwh`, `production_benefit`, per-block `produced_kwh`
+- Added `grid_enery_sold_ack` to InfluxDB Flux query for sold-energy tracking
+- New default parameters: `grid_benefit` (0.0844), `eon_added` (0.02), `location_name` ("Sotehus")
+- Unit tests for production benefit calculation
 
 ### 2026-03-18 Ver 1.5.0
 - Frequency values written to InfluxDB are now the **average** of all samples received since the previous write, instead of the last instantaneous value
