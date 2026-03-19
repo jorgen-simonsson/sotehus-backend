@@ -160,6 +160,6 @@ func clearEnv() {
 		"SPOTPRICE_REGION",
 	}
 	for _, v := range vars {
-		os.Unsetenv(v)
+		_ = os.Unsetenv(v)
 	}
 }

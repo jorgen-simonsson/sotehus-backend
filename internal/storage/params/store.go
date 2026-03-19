@@ -36,7 +36,7 @@ func NewStore(dbPath string, logger *slog.Logger) (*Store, error) {
 
 	// Verify the connection
 	if err := db.Ping(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("ping sqlite database: %w", err)
 	}
 
@@ -46,12 +46,12 @@ func NewStore(dbPath string, logger *slog.Logger) (*Store, error) {
 	}
 
 	if err := s.createTable(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("create parameters table: %w", err)
 	}
 
 	if err := s.seedDefaults(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("seed default parameters: %w", err)
 	}
 
@@ -94,7 +94,7 @@ func (s *Store) GetAll() ([]PersistentParam, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query parameters: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var params []PersistentParam
 	for rows.Next() {

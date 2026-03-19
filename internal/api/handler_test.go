@@ -241,7 +241,7 @@ func newTestParamsStore(t *testing.T) *params.Store {
 	if err != nil {
 		t.Fatalf("Failed to create params store: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { _ = store.Close() })
 	return store
 }
 

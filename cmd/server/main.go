@@ -60,7 +60,7 @@ func main() {
 		logger.Error("Failed to create parameter store", "error", err)
 		os.Exit(1)
 	}
-	defer paramsStore.Close()
+	defer func() { _ = paramsStore.Close() }()
 
 	// Create InfluxDB client (optional - continue if not available)
 	var influxDB *storage.InfluxDBClient
