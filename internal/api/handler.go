@@ -620,7 +620,7 @@ func (h *Handler) GetEnergyCost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Group records into blocks of constant spot_price and calculate costs
-	blocks := h.calculateCostBlocks(records, addPrices)
+	blocks := h.calculateCostBlocks(records, addPrices, gridBenefit, eonAdded)
 
 	// Sum totals using decimal
 	totalConsumed := decimal.Zero
@@ -630,7 +630,11 @@ func (h *Handler) GetEnergyCost(w http.ResponseWriter, r *http.Request) {
 	for _, b := range blocks {
 		totalConsumed = totalConsumed.Add(decimal.NewFromFloat(b.ConsumedKWh))
 		totalProduced = totalProduced.Add(decimal.NewFromFloat(b.ProducedKWh))
-		costBeforeVAT = costBeforeVAT.Add(decimal.NewFromFloat(b.Cost))
+
+		// Compute consumption cost from block fields for VAT calculation
+		// (b.Cost is net and cannot be used directly since VAT applies only to consumption)
+		consumptionCost := decimal.NewFromFloat(b.ConsumedKWh).Mul(decimal.NewFromFloat(b.TotalPrice))
+		costBeforeVAT = costBeforeVAT.Add(consumptionCost)
 
 		// Production benefit per block: (spot_price + grid_benefit + eon_added) * produced_kwh
 		blockProduced := decimal.NewFromFloat(b.ProducedKWh)
@@ -692,7 +696,7 @@ func (h *Handler) fetchAddPrices() (decimal.Decimal, error) {
 // calculateCostBlocks groups time-ordered records into blocks of constant spot_price
 // and calculates the energy consumed, produced, and cost for each block.
 // All arithmetic is performed with decimal.Decimal; final values are rounded to 2 decimal places.
-func (h *Handler) calculateCostBlocks(records []storage.TimeFieldRecord, addPrices decimal.Decimal) []EnergyCostBlock {
+func (h *Handler) calculateCostBlocks(records []storage.TimeFieldRecord, addPrices, gridBenefit, eonAdded decimal.Decimal) []EnergyCostBlock {
 	if len(records) == 0 {
 		return nil
 	}
@@ -711,7 +715,9 @@ func (h *Handler) calculateCostBlocks(records []storage.TimeFieldRecord, addPric
 			consumedKWh := lastRec.ConsumedAck.Sub(firstRec.ConsumedAck)
 			producedKWh := lastRec.SoldAck.Sub(firstRec.SoldAck)
 			totalPrice := currentPrice.Add(addPrices)
-			cost := consumedKWh.Mul(totalPrice)
+			consumptionCost := consumedKWh.Mul(totalPrice)
+			blockBenefit := producedKWh.Mul(currentPrice.Add(gridBenefit).Add(eonAdded))
+			cost := consumptionCost.Sub(blockBenefit)
 
 			blocks = append(blocks, EnergyCostBlock{
 				SpotPrice:   currentPrice.Round(2).InexactFloat64(),

@@ -191,7 +191,7 @@ Returns the API version.
 **Response:**
 ```json
 {
-    "version": "1.6.0"
+    "version": "1.7.0"
 }
 ```
 
@@ -306,7 +306,7 @@ If no spot price is recorded for a given time window, the most recent previous v
   - `total_price` – `spot_price + added_prices` (SEK/kWh)
   - `consumed_kwh` – Energy consumed in this block (kWh)
   - `produced_kwh` – Energy sold back to the grid in this block (kWh)
-  - `cost` – `consumed_kwh × total_price` (SEK, before VAT)
+  - `cost` – Net cost for the block: `consumed_kwh × total_price − produced_kwh × (spot_price + grid_benefit + eon_added)` (SEK). Can be negative when production earnings exceed consumption cost.
   - `start` / `stop` – Time boundaries of this block
 
 **Errors:**
@@ -658,6 +658,13 @@ go test -v ./internal/storage/params
 Note: Some packages have lower coverage because they require external services (MQTT broker, InfluxDB, HTTP APIs) for complete integration testing.
 
 ## Changelog
+
+### 2026-03-29 Ver 1.7.0
+- Per-block `cost` in `GET /api/energy/cost` is now a **net cost** that subtracts production benefit
+  - Block cost formula: `consumed_kwh × total_price − produced_kwh × (spot_price + grid_benefit + eon_added)`
+  - Blocks where production earnings exceed consumption cost now correctly show a negative cost
+- `calculateCostBlocks` now receives `gridBenefit` and `eonAdded` parameters for per-block benefit calculation
+- Updated tests with corrected expected net cost values
 
 ### 2026-03-19 Ver 1.6.0
 - Added **production benefit** to `GET /api/energy/cost` endpoint
