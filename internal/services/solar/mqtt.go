@@ -132,7 +132,7 @@ func (s *MQTTService) onMessage(_ mqtt.Client, msg mqtt.Message) {
 		return
 	}
 
-	power := payload.AC.Power.Actual
-	s.logger.Info("Updated solar power from MQTT", "power", power)
+	power := payload.AC.Power.Actual / 1000.0 // Convert W to kW
+	s.logger.Info("Updated solar power from MQTT", "power_kw", power)
 	s.state.UpdateSolar(power)
 }
