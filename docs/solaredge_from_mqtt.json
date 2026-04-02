@@ -1,0 +1,52 @@
+{
+    "timestamp": "2026-04-02T12:56:55.387728Z",
+    "info": {
+        "timestamp": "2026-04-02T12:49:01.528688Z",
+        "manufacturer": "SolarEdge",
+        "model": "SE10K-RW0TEBNN4",
+        "option": null,
+        "sunspec_type": "Three Phase Inverter",
+        "version": "0004.0014.0229",
+        "serialnumber": "7E17116C",
+        "unit": null
+    },
+    "ac": {
+        "timestamp": "2026-04-02T12:56:55.387685Z",
+        "current": {
+            "timestamp": "2026-04-02T12:56:55.387595Z",
+            "actual": 23.17,
+            "l1": 7.71,
+            "l2": 7.74,
+            "l3": 7.72
+        },
+        "voltage": {
+            "timestamp": "2026-04-02T12:56:55.387643Z",
+            "l1": 402.0,
+            "l2": 400.5,
+            "l3": 399.9,
+            "l1n": 232.5,
+            "l2n": 231.1,
+            "l3n": 230.5
+        },
+        "power": {
+            "timestamp": "2026-04-02T12:56:55.387670Z",
+            "actual": 5368.0,
+            "reactive": -148.0,
+            "apparent": 5370.0,
+            "factor": -99.94
+        },
+        "frequency": 50.02
+    },
+    "dc": {
+        "timestamp": "2026-04-02T12:56:55.387707Z",
+        "current": 7.28,
+        "voltage": 749.0,
+        "power": 5449.0
+    },
+    "energytotal": 69453656.0,
+    "temperature": 53.11,
+    "status_text": "Inverter is ON and producing power",
+    "status": 4,
+    "grid_status": null,
+    "advanced_power_controls": null
+}

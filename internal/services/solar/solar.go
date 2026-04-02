@@ -12,6 +12,7 @@ import (
 	"github.com/jorgen-simonsson/sotehus-backend/internal/config"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/models"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/state"
+	"github.com/jorgen-simonsson/sotehus-backend/internal/storage/params"
 )
 
 const (
@@ -26,15 +27,16 @@ const (
 
 // Service handles fetching solar production from SolarEdge API
 type Service struct {
-	apiKey string
-	siteID string
-	state  *state.Manager
-	logger *slog.Logger
-	client *http.Client
+	apiKey      string
+	siteID      string
+	state       *state.Manager
+	logger      *slog.Logger
+	client      *http.Client
+	paramsStore *params.Store
 }
 
 // NewService creates a new solar service
-func NewService(cfg *config.Config, state *state.Manager, logger *slog.Logger) (*Service, error) {
+func NewService(cfg *config.Config, state *state.Manager, paramsStore *params.Store, logger *slog.Logger) (*Service, error) {
 	if cfg.SolarEdgeAPIKey == "" {
 		return nil, fmt.Errorf("SolarEdge API key is required")
 	}
@@ -43,14 +45,30 @@ func NewService(cfg *config.Config, state *state.Manager, logger *slog.Logger) (
 	}
 
 	return &Service{
-		apiKey: cfg.SolarEdgeAPIKey,
-		siteID: cfg.SolarEdgeSiteID,
-		state:  state,
-		logger: logger,
+		apiKey:      cfg.SolarEdgeAPIKey,
+		siteID:      cfg.SolarEdgeSiteID,
+		state:       state,
+		logger:      logger,
+		paramsStore: paramsStore,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}, nil
+}
+
+// useLocalMQTT checks the parameter store for the use_local_mqtt_solar flag
+func (s *Service) useLocalMQTT() bool {
+	p, err := s.paramsStore.GetByKey("use_local_mqtt_solar")
+	if err != nil {
+		s.logger.Warn("Failed to read use_local_mqtt_solar param, defaulting to true", "error", err)
+		return true
+	}
+	v, err := params.ParseContentBool(p.Content)
+	if err != nil {
+		s.logger.Warn("Failed to parse use_local_mqtt_solar param, defaulting to true", "error", err)
+		return true
+	}
+	return v
 }
 
 // Start begins the solar production fetching loop
@@ -58,6 +76,18 @@ func (s *Service) Start(ctx context.Context) error {
 	s.logger.Info("Starting solar service", "siteID", s.siteID)
 
 	for {
+		// If local MQTT solar is enabled, this cloud service stays idle
+		if s.useLocalMQTT() {
+			s.logger.Debug("Local MQTT solar enabled, cloud solar service idle")
+			select {
+			case <-ctx.Done():
+				s.logger.Info("Solar service shutting down...")
+				return nil
+			case <-time.After(1 * time.Minute):
+				continue
+			}
+		}
+
 		// Check if sun is up
 		if !s.isSunUp() {
 			s.logger.Debug("Sun is down, skipping solar fetch")

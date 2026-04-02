@@ -131,7 +131,7 @@ func main() {
 
 	// Start Solar service
 	if cfg.SolarEdgeAPIKey != "" && cfg.SolarEdgeSiteID != "" {
-		solarService, err := solar.NewService(cfg, stateManager, logger)
+		solarService, err := solar.NewService(cfg, stateManager, paramsStore, logger)
 		if err != nil {
 			logger.Error("Failed to create solar service", "error", err)
 		} else {
@@ -146,6 +146,35 @@ func main() {
 		}
 	} else {
 		logger.Info("SolarEdge not configured, solar service disabled")
+	}
+
+	// Start Solar MQTT service (local modbus bridge)
+	if cfg.MQTTBrokerHost != "" {
+		useLocalMQTT := true
+		p, err := paramsStore.GetByKey("use_local_mqtt_solar")
+		if err == nil {
+			if v, err := params.ParseContentBool(p.Content); err == nil {
+				useLocalMQTT = v
+			}
+		}
+
+		if useLocalMQTT {
+			solarMQTTService, err := solar.NewMQTTService(cfg, stateManager, logger)
+			if err != nil {
+				logger.Error("Failed to create solar MQTT service", "error", err)
+			} else {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					if err := solarMQTTService.Start(ctx); err != nil {
+						logger.Error("Solar MQTT service error", "error", err)
+					}
+				}()
+				logger.Info("Solar MQTT service started (local modbus bridge)")
+			}
+		} else {
+			logger.Info("Local MQTT solar disabled by parameter")
+		}
 	}
 
 	// Create HTTP router

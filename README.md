@@ -55,6 +55,7 @@ The Sotehus system monitors and visualizes energy data for a household with sola
 
 - **Smart Gateway P1** – A dongle connected to the P1 port of the electrical meter. Emits detailed import/export power, voltage, and current data every 5 seconds over local WiFi. ([smartgateways.se](https://smartgateways.se/))
 - **FFR Sensor** – An Arduino system measuring grid frequency at high precision. Data is sent via serial link to the [ffr-collector](https://github.com/jorgen-simonsson/ffr-collector) service on sotehus-rugged, which converts it to MQTT and publishes to the Mosquitto broker at high rate.
+- **SolarEdge Inverter (Modbus → MQTT)** – A local container running [solaredge2mqtt](https://github.com/DerOetzi/solaredge2mqtt) reads solar production data directly from the SolarEdge inverter via Modbus and publishes it to the MQTT topic `solaredge/modbus/inverter`. This replaces the cloud API when the `use_local_mqtt_solar` parameter is enabled.
 
 **External APIs:**
 
@@ -86,6 +87,7 @@ graph LR
         INFLUXDB["InfluxDB"]
         PWA["Frontend PWA"]
         SQLITE["SQLite"]
+        SE2MQTT["solaredge2mqtt<br/>(Modbus → MQTT)"]
     end
 
     subgraph External APIs
@@ -93,13 +95,17 @@ graph LR
         SPOTPRICE["elprisetjustnu.se"]
     end
 
+    INVERTER["SolarEdge Inverter"] -- Modbus --> SE2MQTT
+    SE2MQTT -- MQTT --> MOSQUITTO
+
     P1["Smart Gateway P1<br/>(electrical meter)"] -- MQTT / WiFi --> MOSQUITTO
     FFR_SENSOR -- serial --> FFR_COLLECTOR
     FFR_COLLECTOR -- MQTT --> MOSQUITTO
 
     MOSQUITTO -- grid data --> BACKEND
     MOSQUITTO -- frequency data --> BACKEND
-    SOLAREDGE -- solar production --> BACKEND
+    MOSQUITTO -- solar production --> BACKEND
+    SOLAREDGE -- solar production (cloud API, fallback) --> BACKEND
     SPOTPRICE -- spot prices --> BACKEND
 
     BACKEND -- write every 5s --> INFLUXDB
@@ -114,7 +120,7 @@ graph LR
 This backend service aggregates data from multiple sources to provide:
 - **Grid Consumption** - Real-time power consumption from smart meter via MQTT
 - **Electricity Price** - Current spot price per kWh from Swedish electricity market
-- **Solar Production** - Current solar panel output from SolarEdge API
+- **Solar Production** - Current solar panel output via local MQTT (Modbus bridge) or SolarEdge cloud API
 - **Grid Frequency** - Real-time grid frequency from FFR collector via MQTT
 
 ## Swagger UI
@@ -357,6 +363,7 @@ The following parameters are automatically seeded on first startup if they don't
 | `grid_benefit` | Grid production benefit | `{"value": 0.0844}` |
 | `eon_added` | EON production addition | `{"value": 0.02}` |
 | `location_name` | Location name | `{"value": "Sotehus"}` |
+| `use_local_mqtt_solar` | Use local MQTT data for solar production | `{"value": true}` |
 
 Default parameters are defined in `internal/storage/params/model.go` and can be extended by adding entries to the `DefaultParams` slice.
 
@@ -498,11 +505,11 @@ Each entry maps an MQTT topic to an InfluxDB field name. All values are aggregat
 - Updates every 15 minutes
 
 ### Solar Process
-- Fetches current production from SolarEdge Monitoring API
-- Respects API rate limits (300 calls/day)
-- Calculates optimal polling interval based on daylight hours
-- Polls from 1 hour before sunrise until 1 hour after sunset
-- Shows "No sun" message during nighttime
+- Two modes controlled by the `use_local_mqtt_solar` persistent parameter (default: `true`):
+  - **Local MQTT mode** (`use_local_mqtt_solar = true`): Subscribes to the MQTT topic `solaredge/modbus/inverter` for solar production data published by a local Modbus-to-MQTT bridge. Extracts `ac.power.actual` from each message as current production in Watts. No rate limits or nighttime restrictions — data is received whenever the inverter publishes.
+  - **Cloud API mode** (`use_local_mqtt_solar = false`): Fetches production from the SolarEdge Monitoring API. Respects API rate limits (300 calls/day), calculates optimal polling interval based on daylight hours, and only polls from 1 hour before sunrise until 1 hour after sunset.
+- When local MQTT mode is enabled, the cloud API process stays idle (re-checks the parameter every minute)
+- Both modes update the same shared state, so the `/api/data` response is identical regardless of source
 
 ### FFR Process
 - Subscribes to the `ffr_collector` MQTT topic for real-time grid frequency data
@@ -570,7 +577,8 @@ SQLITE_DB_PATH=./data/params.db
 │   │   ├── price/
 │   │   │   └── price.go         # Spot price fetcher
 │   │   └── solar/
-│   │       └── solar.go         # SolarEdge API client
+│   │       ├── solar.go         # SolarEdge cloud API client
+│   │       └── mqtt.go          # MQTT subscriber for local solar data (Modbus bridge)
 │   ├── storage/
 │   │   ├── influxdb.go          # InfluxDB client
 │   │   └── params/
@@ -658,6 +666,17 @@ go test -v ./internal/storage/params
 Note: Some packages have lower coverage because they require external services (MQTT broker, InfluxDB, HTTP APIs) for complete integration testing.
 
 ## Changelog
+
+### 2026-04-02 Ver 1.8.0
+- Added local MQTT-based solar production data source as alternative to SolarEdge cloud API
+  - New MQTT subscriber (`internal/services/solar/mqtt.go`) listens on `solaredge/modbus/inverter` topic
+  - Extracts `ac.power.actual` from inverter payload as current solar production in Watts
+  - No rate limits or nighttime restrictions — receives data whenever the inverter publishes
+- New persistent parameter `use_local_mqtt_solar` (default: `true`) controls which solar data source is active
+  - When `true`: local MQTT subscriber runs, cloud API service stays idle
+  - When `false`: cloud API service runs as before
+- Added `ParseContentBool` helper for extracting boolean values from parameter JSON
+- Cloud solar service now re-checks the parameter every minute and resumes API polling if switched back
 
 ### 2026-03-29 Ver 1.7.0
 - Per-block `cost` in `GET /api/energy/cost` is now a **net cost** that subtracts production benefit

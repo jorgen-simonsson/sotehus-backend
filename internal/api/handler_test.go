@@ -271,8 +271,8 @@ func TestGetAllParams(t *testing.T) {
 		t.Fatalf("Failed to unmarshal response: %v", err)
 	}
 
-	if len(result) != 8 {
-		t.Fatalf("Expected 8 default params, got %d", len(result))
+	if len(result) != 9 {
+		t.Fatalf("Expected 9 default params, got %d", len(result))
 	}
 
 	keys := make(map[string]bool)
@@ -372,8 +372,8 @@ func TestCreateParam_Success(t *testing.T) {
 	if err := json.Unmarshal(recAll.Body.Bytes(), &allParams); err != nil {
 		t.Fatalf("Failed to unmarshal response: %v", err)
 	}
-	if len(allParams) != 9 {
-		t.Errorf("Expected 9 params after create, got %d", len(allParams))
+	if len(allParams) != 10 {
+		t.Errorf("Expected 10 params after create, got %d", len(allParams))
 	}
 }
 

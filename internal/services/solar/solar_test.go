@@ -8,7 +8,19 @@ import (
 
 	"github.com/jorgen-simonsson/sotehus-backend/internal/config"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/state"
+	"github.com/jorgen-simonsson/sotehus-backend/internal/storage/params"
 )
+
+func newTestParamsStore(t *testing.T) *params.Store {
+	t.Helper()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	store, err := params.NewStore(":memory:", logger)
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	return store
+}
 
 func TestNewServiceMissingAPIKey(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -19,7 +31,7 @@ func TestNewServiceMissingAPIKey(t *testing.T) {
 		SolarEdgeSiteID: "12345",
 	}
 
-	service, err := NewService(cfg, mgr, logger)
+	service, err := NewService(cfg, mgr, newTestParamsStore(t), logger)
 
 	if err == nil {
 		t.Error("Expected error for missing API key")
@@ -41,7 +53,7 @@ func TestNewServiceMissingSiteID(t *testing.T) {
 		SolarEdgeSiteID: "",
 	}
 
-	service, err := NewService(cfg, mgr, logger)
+	service, err := NewService(cfg, mgr, newTestParamsStore(t), logger)
 
 	if err == nil {
 		t.Error("Expected error for missing site ID")
@@ -63,7 +75,7 @@ func TestNewServiceSuccess(t *testing.T) {
 		SolarEdgeSiteID: "12345",
 	}
 
-	service, err := NewService(cfg, mgr, logger)
+	service, err := NewService(cfg, mgr, newTestParamsStore(t), logger)
 
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -88,7 +100,7 @@ func TestCalculateSunriseSunsetSummer(t *testing.T) {
 		SolarEdgeSiteID: "12345",
 	}
 
-	service, _ := NewService(cfg, mgr, logger)
+	service, _ := NewService(cfg, mgr, newTestParamsStore(t), logger)
 
 	// Test midsummer (June 21)
 	date := time.Date(2025, 6, 21, 12, 0, 0, 0, time.Local)
@@ -120,7 +132,7 @@ func TestCalculateSunriseSunsetWinter(t *testing.T) {
 		SolarEdgeSiteID: "12345",
 	}
 
-	service, _ := NewService(cfg, mgr, logger)
+	service, _ := NewService(cfg, mgr, newTestParamsStore(t), logger)
 
 	// Test midwinter (December 21)
 	date := time.Date(2025, 12, 21, 12, 0, 0, 0, time.Local)
@@ -152,7 +164,7 @@ func TestIsSunUpMidday(t *testing.T) {
 		SolarEdgeSiteID: "12345",
 	}
 
-	service, _ := NewService(cfg, mgr, logger)
+	service, _ := NewService(cfg, mgr, newTestParamsStore(t), logger)
 
 	// Test at noon - should always be considered sun up (in Stockholm at least)
 	// This tests the logic but uses current time
@@ -171,7 +183,7 @@ func TestCalculateUpdateInterval(t *testing.T) {
 		SolarEdgeSiteID: "12345",
 	}
 
-	service, _ := NewService(cfg, mgr, logger)
+	service, _ := NewService(cfg, mgr, newTestParamsStore(t), logger)
 
 	interval := service.calculateUpdateInterval()
 

@@ -40,6 +40,7 @@ var DefaultParams = []PersistentParam{
 	{Key: "grid_benefit", Description: "Grid production benefit", Content: `{"value": 0.0844}`},
 	{Key: "eon_added", Description: "EON production addition", Content: `{"value": 0.02}`},
 	{Key: "location_name", Description: "Location name", Content: `{"value": "Sotehus"}`},
+	{Key: "use_local_mqtt_solar", Description: "Use local MQTT data for solar production", Content: `{"value": true}`},
 }
 
 // ParseContentValue extracts the numeric "value" field from a parameter's JSON content string.
@@ -66,4 +67,24 @@ func ParseContentValue(content string) (decimal.Decimal, error) {
 		return decimal.Zero, fmt.Errorf("\"value\" is not a valid decimal: %w", err)
 	}
 	return d, nil
+}
+
+// ParseContentBool extracts the boolean "value" field from a parameter's JSON content string.
+// Content is expected to be in the format: {"value": true} or {"value": false}
+func ParseContentBool(content string) (bool, error) {
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		return false, fmt.Errorf("invalid JSON content: %w", err)
+	}
+
+	raw, ok := parsed["value"]
+	if !ok {
+		return false, fmt.Errorf("missing \"value\" key in content")
+	}
+
+	var val bool
+	if err := json.Unmarshal(raw, &val); err != nil {
+		return false, fmt.Errorf("\"value\" is not a boolean: %w", err)
+	}
+	return val, nil
 }
