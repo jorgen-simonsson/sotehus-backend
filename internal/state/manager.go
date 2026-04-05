@@ -20,6 +20,12 @@ type Manager struct {
 	freqSum        float64
 	freqCount      int
 	freqLastUpdate time.Time
+
+	// Solar extra fields from MQTT inverter data
+	solarEnergyAck float64 // last energytotal value (Wh)
+	solarEnergySet bool
+	solarFrequency float64 // last ac.frequency value (Hz)
+	solarFreqSet   bool
 }
 
 // NewManager creates a new state manager with default values
@@ -179,4 +185,34 @@ func (m *Manager) GetFrequencyData() models.FrequencyData {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.frequencyData
+}
+
+// UpdateSolarEnergyAck stores the latest energytotal value (Wh) from the inverter.
+func (m *Manager) UpdateSolarEnergyAck(value float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.solarEnergyAck = value
+	m.solarEnergySet = true
+}
+
+// GetSolarEnergyAck returns the last stored energytotal value and whether it has been set.
+func (m *Manager) GetSolarEnergyAck() (float64, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.solarEnergyAck, m.solarEnergySet
+}
+
+// UpdateSolarFrequency stores the latest AC frequency value (Hz) from the inverter.
+func (m *Manager) UpdateSolarFrequency(value float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.solarFrequency = value
+	m.solarFreqSet = true
+}
+
+// GetSolarFrequency returns the last stored solar AC frequency and whether it has been set.
+func (m *Manager) GetSolarFrequency() (float64, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.solarFrequency, m.solarFreqSet
 }

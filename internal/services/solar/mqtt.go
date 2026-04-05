@@ -29,7 +29,9 @@ type inverterPayload struct {
 		Power struct {
 			Actual float64 `json:"actual"`
 		} `json:"power"`
+		Frequency float64 `json:"frequency"`
 	} `json:"ac"`
+	EnergyTotal float64 `json:"energytotal"`
 }
 
 // MQTTService subscribes to local MQTT solar data from a modbus bridge
@@ -133,6 +135,8 @@ func (s *MQTTService) onMessage(_ mqtt.Client, msg mqtt.Message) {
 	}
 
 	power := payload.AC.Power.Actual / 1000.0 // Convert W to kW
-	s.logger.Info("Updated solar power from MQTT", "power_kw", power)
+	s.logger.Info("Updated solar power from MQTT", "power_kw", power, "energy_total_wh", payload.EnergyTotal, "frequency", payload.AC.Frequency)
 	s.state.UpdateSolar(power)
+	s.state.UpdateSolarEnergyAck(payload.EnergyTotal)
+	s.state.UpdateSolarFrequency(payload.AC.Frequency)
 }

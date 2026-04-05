@@ -67,6 +67,21 @@ The Sotehus system monitors and visualizes energy data for a household with sola
 - **InfluxDB** – Time-series database for all sensor data, persisted every 5 seconds. Runs as a Docker container on sotehus-pi5. Backups are scheduled via cron to file storage on sotehus-rugged.
 - **SQLite** – Persistent parameter store for configurable price additions, VAT, etc.
 
+#### InfluxDB Fields
+
+All data is written to the `power_monitoring` measurement. The grid service aggregates values from multiple sources into a single InfluxDB point every write cycle (~5 seconds).
+
+| Field | Source | Description |
+|-------|--------|-------------|
+| `grid_power` | MQTT `dsmr/reading/powerdelivered_netto` | Current grid power consumption (kW) |
+| `grid_enery_consumed_ack` | MQTT `dsmr/reading/electricity_delivered_1` | Lifetime energy consumed accumulator (kWh) |
+| `grid_enery_sold_ack` | MQTT `dsmr/reading/electricity_returned_1` | Lifetime energy sold accumulator (kWh) |
+| `grid_frequency` | MQTT `ffr_collector` | Average grid frequency since last write (Hz) |
+| `spot_price` | elprisetjustnu.se API | Current electricity spot price (SEK/kWh) |
+| `solar_production` | MQTT `solaredge/modbus/inverter` / SolarEdge API | Current solar production (kW) |
+| `solar_energy_ack` | MQTT `solaredge/modbus/inverter` → `energytotal` | Lifetime solar energy accumulator (Wh) |
+| `solar_frequency` | MQTT `solaredge/modbus/inverter` → `ac.frequency` | AC frequency reported by the inverter (Hz) |
+
 ### Frontend
 
 The frontend is a PWA ([sotehus-pwa](https://github.com/jorgen-simonsson/sotehus-pwa)) running as a Docker container on sotehus-pi5. It accesses the backend via Tailscale to view data and edit parameters.
@@ -506,7 +521,7 @@ Each entry maps an MQTT topic to an InfluxDB field name. All values are aggregat
 
 ### Solar Process
 - Two modes controlled by the `use_local_mqtt_solar` persistent parameter (default: `true`):
-  - **Local MQTT mode** (`use_local_mqtt_solar = true`): Subscribes to the MQTT topic `solaredge/modbus/inverter` for solar production data published by a local Modbus-to-MQTT bridge. Extracts `ac.power.actual` from each message as current production in Watts. No rate limits or nighttime restrictions — data is received whenever the inverter publishes.
+  - **Local MQTT mode** (`use_local_mqtt_solar = true`): Subscribes to the MQTT topic `solaredge/modbus/inverter` for solar production data published by a local Modbus-to-MQTT bridge. Extracts `ac.power.actual` from each message as current production in Watts. Also captures `energytotal` (lifetime energy in Wh) and `ac.frequency` (inverter-reported grid frequency in Hz) and stores them in state for inclusion in InfluxDB writes. No rate limits or nighttime restrictions — data is received whenever the inverter publishes.
   - **Cloud API mode** (`use_local_mqtt_solar = false`): Fetches production from the SolarEdge Monitoring API. Respects API rate limits (300 calls/day), calculates optimal polling interval based on daylight hours, and only polls from 1 hour before sunrise until 1 hour after sunset.
 - When local MQTT mode is enabled, the cloud API process stays idle (re-checks the parameter every minute)
 - Both modes update the same shared state, so the `/api/data` response is identical regardless of source
@@ -666,6 +681,15 @@ go test -v ./internal/storage/params
 Note: Some packages have lower coverage because they require external services (MQTT broker, InfluxDB, HTTP APIs) for complete integration testing.
 
 ## Changelog
+
+### 2026-04-05 Ver 1.9.0
+- Added two new InfluxDB fields from solar inverter MQTT data:
+  - `solar_energy_ack` – lifetime energy accumulator from `energytotal` (Wh)
+  - `solar_frequency` – AC grid frequency from `ac.frequency` (Hz)
+- Extended `inverterPayload` to parse `energytotal` and `ac.frequency` from MQTT messages
+- New state manager methods: `UpdateSolarEnergyAck`, `GetSolarEnergyAck`, `UpdateSolarFrequency`, `GetSolarFrequency`
+- Grid service includes solar energy and frequency fields in each aggregated InfluxDB write
+- Added InfluxDB fields reference table to README
 
 ### 2026-04-02 Ver 1.8.0
 - Added local MQTT-based solar production data source as alternative to SolarEdge cloud API
