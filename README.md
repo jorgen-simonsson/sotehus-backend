@@ -276,7 +276,9 @@ Returns the energy sold (exported to grid) in kWh between two timestamps.
 
 Returns the actual energy cost for a period, broken down by spot-price blocks.
 
-The endpoint queries InfluxDB for `spot_price`, consumed-energy and sold-energy accumulator readings in the requested time range, groups consecutive records that share the same spot price into blocks, and computes per-block kWh and cost. Configured price additions (transfer fee, energy tax, dynamic and static additions) are added on top of the spot price for each block. VAT is applied to the consumption cost total. A production benefit is then subtracted from the VAT-inclusive total — VAT is **not** applied to the production benefit.
+The endpoint queries InfluxDB for `spot_price`, consumed-energy and sold-energy accumulator readings in the requested time range. Data is downsampled to hourly resolution using `aggregateWindow(every: 1h, fn: last)` before processing, reducing ~500k raw records to ~720 per month for fast response times (<1 second for a full calendar month).
+
+Records are grouped into blocks of consecutive constant spot price. Block boundaries overlap: each new block measures energy starting from the previous block's last accumulator value, so no energy is lost between blocks. Configured price additions (transfer fee, energy tax, dynamic and static additions) are added on top of the spot price for each block. VAT is applied to the consumption cost total. A production benefit is then subtracted from the VAT-inclusive total — VAT is **not** applied to the production benefit.
 
 The production benefit per block is calculated as `(spot_price + grid_benefit + eon_added) × produced_kwh`. The sum of all block decreases is subtracted from the final cost: `total_cost = cost_before_vat × (1 + vat/100) − production_benefit`.
 
@@ -681,6 +683,13 @@ go test -v ./internal/storage/params
 Note: Some packages have lower coverage because they require external services (MQTT broker, InfluxDB, HTTP APIs) for complete integration testing.
 
 ## Changelog
+
+### 2026-04-05 Ver 2.0.0
+- **Major performance improvement** for `GET /api/energy/cost`: response time reduced from ~15s to <0.2s for a calendar month
+  - InfluxDB Flux query reordered: `aggregateWindow(every: 1h, fn: last)` now runs before `fill(usePrevious)`, reducing the dataset from ~500k rows to ~720 before expensive operations
+  - Downsample-first pipeline: aggregate → fill → pivot → sort
+- Cost block boundaries now overlap: each block measures energy from the previous block's last accumulator value, eliminating energy loss at block boundaries
+- Added `tools/tailflux` — a CLI tool that tails InfluxDB and prints all field values for each incoming record in real time
 
 ### 2026-04-05 Ver 1.9.0
 - Added two new InfluxDB fields from solar inverter MQTT data:

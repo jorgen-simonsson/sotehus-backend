@@ -695,6 +695,8 @@ func (h *Handler) fetchAddPrices() (decimal.Decimal, error) {
 
 // calculateCostBlocks groups time-ordered records into blocks of constant spot_price
 // and calculates the energy consumed, produced, and cost for each block.
+// Block boundaries overlap: each new block's energy starts from the previous block's
+// last accumulator value, ensuring no energy is lost between blocks.
 // All arithmetic is performed with decimal.Decimal; final values are rounded to 2 decimal places.
 func (h *Handler) calculateCostBlocks(records []storage.TimeFieldRecord, addPrices, gridBenefit, eonAdded decimal.Decimal) []EnergyCostBlock {
 	if len(records) == 0 {
@@ -703,17 +705,21 @@ func (h *Handler) calculateCostBlocks(records []storage.TimeFieldRecord, addPric
 
 	var blocks []EnergyCostBlock
 
-	blockStart := 0
+	// prevAck tracks the accumulator values at the end of the previous block.
+	// Each new block measures energy starting from these values, so no energy
+	// is lost at block boundaries (overlap).
+	prevConsumedAck := records[0].ConsumedAck
+	prevSoldAck := records[0].SoldAck
+	blockStartTime := records[0].Time
 	currentPrice := records[0].SpotPrice
 
 	for i := 1; i <= len(records); i++ {
 		// End of data or price changed — close current block
 		if i == len(records) || !records[i].SpotPrice.Equal(currentPrice) {
-			firstRec := records[blockStart]
 			lastRec := records[i-1]
 
-			consumedKWh := lastRec.ConsumedAck.Sub(firstRec.ConsumedAck)
-			producedKWh := lastRec.SoldAck.Sub(firstRec.SoldAck)
+			consumedKWh := lastRec.ConsumedAck.Sub(prevConsumedAck)
+			producedKWh := lastRec.SoldAck.Sub(prevSoldAck)
 			totalPrice := currentPrice.Add(addPrices)
 			consumptionCost := consumedKWh.Mul(totalPrice)
 			blockBenefit := producedKWh.Mul(currentPrice.Add(gridBenefit).Add(eonAdded))
@@ -726,12 +732,15 @@ func (h *Handler) calculateCostBlocks(records []storage.TimeFieldRecord, addPric
 				ConsumedKWh: consumedKWh.Round(2).InexactFloat64(),
 				ProducedKWh: producedKWh.Round(2).InexactFloat64(),
 				Cost:        cost.Round(2).InexactFloat64(),
-				Start:       firstRec.Time.Format(time.RFC3339),
+				Start:       blockStartTime.Format(time.RFC3339),
 				Stop:        lastRec.Time.Format(time.RFC3339),
 			})
 
 			if i < len(records) {
-				blockStart = i
+				// Overlap: next block starts from this block's last accumulator values
+				prevConsumedAck = lastRec.ConsumedAck
+				prevSoldAck = lastRec.SoldAck
+				blockStartTime = records[i].Time
 				currentPrice = records[i].SpotPrice
 			}
 		}

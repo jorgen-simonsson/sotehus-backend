@@ -871,28 +871,30 @@ func TestCalculateCostBlocks_MultiplePrices(t *testing.T) {
 		t.Errorf("Block 0 Cost = %f, want %f", blocks[0].Cost, 4.5)
 	}
 
-	// Block 2: consumed=2.5, produced=0.5, spot=0.80, totalPrice=1.30
-	// net = 2.5*1.30 - 0.5*0.80 = 2.85
-	if blocks[1].ConsumedKWh != 2.5 {
-		t.Errorf("Block 1 ConsumedKWh = %f, want %f", blocks[1].ConsumedKWh, 2.5)
+	// Block 2: overlap from previous block's last ack (105.0, 11.0)
+	// consumed=108-105=3.0, produced=11.5-11.0=0.5, spot=0.80, totalPrice=1.30
+	// net = 3.0*1.30 - 0.5*0.80 = 3.50
+	if blocks[1].ConsumedKWh != 3.0 {
+		t.Errorf("Block 1 ConsumedKWh = %f, want %f", blocks[1].ConsumedKWh, 3.0)
 	}
 	if blocks[1].ProducedKWh != 0.5 {
 		t.Errorf("Block 1 ProducedKWh = %f, want %f", blocks[1].ProducedKWh, 0.5)
 	}
-	if blocks[1].Cost != 2.85 {
-		t.Errorf("Block 1 Cost = %f, want %f", blocks[1].Cost, 2.85)
+	if blocks[1].Cost != 3.5 {
+		t.Errorf("Block 1 Cost = %f, want %f", blocks[1].Cost, 3.5)
 	}
 
-	// Block 3: consumed=1.5, produced=0.5, spot=0.30, totalPrice=0.80
-	// net = 1.5*0.80 - 0.5*0.30 = 1.05
-	if blocks[2].ConsumedKWh != 1.5 {
-		t.Errorf("Block 2 ConsumedKWh = %f, want %f", blocks[2].ConsumedKWh, 1.5)
+	// Block 3: overlap from previous block's last ack (108.0, 11.5)
+	// consumed=110-108=2.0, produced=12.0-11.5=0.5, spot=0.30, totalPrice=0.80
+	// net = 2.0*0.80 - 0.5*0.30 = 1.45
+	if blocks[2].ConsumedKWh != 2.0 {
+		t.Errorf("Block 2 ConsumedKWh = %f, want %f", blocks[2].ConsumedKWh, 2.0)
 	}
 	if blocks[2].ProducedKWh != 0.5 {
 		t.Errorf("Block 2 ProducedKWh = %f, want %f", blocks[2].ProducedKWh, 0.5)
 	}
-	if blocks[2].Cost != 1.05 {
-		t.Errorf("Block 2 Cost = %f, want %f", blocks[2].Cost, 1.05)
+	if blocks[2].Cost != 1.45 {
+		t.Errorf("Block 2 Cost = %f, want %f", blocks[2].Cost, 1.45)
 	}
 }
 
