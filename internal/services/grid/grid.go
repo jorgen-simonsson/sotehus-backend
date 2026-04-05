@@ -366,6 +366,16 @@ func (s *Service) flushToInfluxLocked() {
 		s.pendingValues["solar_production"] = solarData.Power
 	}
 
+	// Get solar energy accumulator from state
+	if energyAck, ok := s.state.GetSolarEnergyAck(); ok {
+		s.pendingValues["solar_energy_ack"] = energyAck
+	}
+
+	// Get solar AC frequency from state
+	if solarFreq, ok := s.state.GetSolarFrequency(); ok {
+		s.pendingValues["solar_frequency"] = solarFreq
+	}
+
 	// Create a copy for the write
 	fields := make(map[string]float64, len(s.pendingValues))
 	for k, v := range s.pendingValues {

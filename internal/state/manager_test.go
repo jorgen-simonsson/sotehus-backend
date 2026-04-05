@@ -305,3 +305,49 @@ func TestConcurrentAccess(t *testing.T) {
 		t.Error("Frequency should be valid after concurrent updates")
 	}
 }
+
+func TestSolarEnergyAck(t *testing.T) {
+	m := NewManager()
+
+	// Initially not set
+	val, ok := m.GetSolarEnergyAck()
+	if ok {
+		t.Error("solarEnergyAck should not be set initially")
+	}
+	if val != 0 {
+		t.Errorf("solarEnergyAck = %f, want 0", val)
+	}
+
+	// After update
+	m.UpdateSolarEnergyAck(69453656.0)
+	val, ok = m.GetSolarEnergyAck()
+	if !ok {
+		t.Error("solarEnergyAck should be set after update")
+	}
+	if val != 69453656.0 {
+		t.Errorf("solarEnergyAck = %f, want %f", val, 69453656.0)
+	}
+}
+
+func TestSolarFrequency(t *testing.T) {
+	m := NewManager()
+
+	// Initially not set
+	val, ok := m.GetSolarFrequency()
+	if ok {
+		t.Error("solarFrequency should not be set initially")
+	}
+	if val != 0 {
+		t.Errorf("solarFrequency = %f, want 0", val)
+	}
+
+	// After update
+	m.UpdateSolarFrequency(50.02)
+	val, ok = m.GetSolarFrequency()
+	if !ok {
+		t.Error("solarFrequency should be set after update")
+	}
+	if val != 50.02 {
+		t.Errorf("solarFrequency = %f, want %f", val, 50.02)
+	}
+}
