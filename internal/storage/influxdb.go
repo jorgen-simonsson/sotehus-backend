@@ -317,19 +317,23 @@ type TimeFieldRecord struct {
 
 // GetFieldsInRange returns time-ordered records with spot_price and grid_enery_consumed_ack
 // for the given time range. Uses Flux pivot to combine both fields into single rows,
-// and fill(usePrevious: true) to carry forward the last known spot_price when missing.
+// fill(usePrevious: true) to carry forward the last known spot_price when missing,
+// and aggregateWindow to downsample to hourly records for performance.
 func (c *InfluxDBClient) GetFieldsInRange(start, stop time.Time) ([]TimeFieldRecord, error) {
 	queryAPI := c.client.QueryAPI(c.org)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// Query both fields, fill forward missing spot_price, pivot into rows, sort by time
+	// Downsample to 1h windows first (reducing ~500k rows to ~720 per field),
+	// then fill forward missing spot_price on the small result set, pivot and sort.
+	// Spot prices change at hour boundaries so 1h aggregation preserves full accuracy.
 	query := fmt.Sprintf(`
 		from(bucket: "%s")
 		|> range(start: %s, stop: %s)
 		|> filter(fn: (r) => r._measurement == "power_monitoring")
 		|> filter(fn: (r) => r._field == "spot_price" or r._field == "grid_enery_consumed_ack" or r._field == "grid_enery_sold_ack")
+		|> aggregateWindow(every: 1h, fn: last, createEmpty: false)
 		|> fill(usePrevious: true)
 		|> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
 		|> filter(fn: (r) => exists r.grid_enery_consumed_ack and exists r.spot_price)
