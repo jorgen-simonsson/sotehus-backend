@@ -32,6 +32,9 @@ definitions:
       cost:
         example: 14.22
         type: number
+      produced_kwh:
+        example: 1.5
+        type: number
       spot_price:
         example: 0.45
         type: number
@@ -60,11 +63,17 @@ definitions:
       period_stop:
         example: "2026-02-22T12:00:00+01:00"
         type: string
+      production_benefit:
+        example: 5.67
+        type: number
       total_consumed_kwh:
         example: 156.78
         type: number
       total_cost:
-        example: 225.91
+        example: 220.24
+        type: number
+      total_produced_kwh:
+        example: 23.45
         type: number
       unit:
         example: SEK
@@ -98,6 +107,27 @@ definitions:
     properties:
       status:
         example: ok
+        type: string
+    type: object
+  api.SolisResponse:
+    properties:
+      battery_power:
+        example: 1234.1
+        type: number
+      battery_soc:
+        example: 34
+        type: number
+      grid_power:
+        example: 0.23
+        type: number
+      household_load:
+        example: 923.56
+        type: number
+      solar_power:
+        example: 5450.23
+        type: number
+      timestamp:
+        example: "2025-12-07T16:30:00+01:00"
         type: string
     type: object
   api.TimeSeriesResponse:
@@ -479,6 +509,34 @@ paths:
       summary: Update an existing parameter
       tags:
       - parameters
+  /api/solis:
+    get:
+      description: |-
+        Returns the most recent record from the "solis" InfluxDB bucket. household_load is
+        calculated from the power balance: solar_power - battery_power - grid_power, where
+        grid_power is positive when exporting and battery_power is positive when charging.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SolisResponse'
+        "404":
+          description: No Solis data found
+          schema:
+            type: string
+        "500":
+          description: Failed to query Solis data
+          schema:
+            type: string
+        "503":
+          description: InfluxDB not configured
+          schema:
+            type: string
+      summary: Get latest Solis inverter data
+      tags:
+      - energy
   /api/timeseries:
     get:
       description: Returns statistics about the historical data stored in InfluxDB

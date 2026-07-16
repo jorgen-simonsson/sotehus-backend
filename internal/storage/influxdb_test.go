@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/jorgen-simonsson/sotehus-backend/internal/config"
 )
@@ -116,6 +117,118 @@ func TestConfigBuildURL(t *testing.T) {
 				t.Errorf("URL = %q, want %q", url, tt.expected)
 			}
 		})
+	}
+}
+
+// TestEnsureBucketExistsAndWriteToBucket exercises the Solis bucket-creation
+// and cross-bucket write path against a real InfluxDB instance.
+func TestEnsureBucketExistsAndWriteToBucket(t *testing.T) {
+	if os.Getenv("TEST_INFLUXDB_HOST") == "" {
+		t.Skip("Skipping InfluxDB integration test (set TEST_INFLUXDB_HOST to run)")
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	cfg := &config.Config{
+		InfluxDBHost:   os.Getenv("TEST_INFLUXDB_HOST"),
+		InfluxDBPort:   8086,
+		InfluxDBOrg:    "sotehus",
+		InfluxDBBucket: "power",
+		InfluxDBToken:  os.Getenv("TEST_INFLUXDB_TOKEN"),
+	}
+
+	client, err := NewInfluxDBClient(cfg, logger)
+	if err != nil {
+		t.Skipf("InfluxDB connection failed (expected in CI): %v", err)
+	}
+	defer client.Close()
+
+	const testBucket = "solis_test"
+
+	if err := client.EnsureBucketExists(testBucket); err != nil {
+		t.Fatalf("EnsureBucketExists() first call error = %v", err)
+	}
+
+	// Calling it again with an already-existing bucket must be a no-op, not an error.
+	if err := client.EnsureBucketExists(testBucket); err != nil {
+		t.Fatalf("EnsureBucketExists() second call error = %v", err)
+	}
+
+	fields := map[string]float64{
+		"voltage.L1":  231.20,
+		"power.total": 790.00,
+	}
+
+	if err := client.WriteToBucket(testBucket, "solis_inverter", fields, time.Now()); err != nil {
+		t.Fatalf("WriteToBucket() error = %v", err)
+	}
+}
+
+// TestGetLastSolisRecord writes a known record to the "solis" bucket and
+// verifies GetLastSolisRecord reads it back correctly against a real InfluxDB instance.
+func TestGetLastSolisRecord(t *testing.T) {
+	if os.Getenv("TEST_INFLUXDB_HOST") == "" {
+		t.Skip("Skipping InfluxDB integration test (set TEST_INFLUXDB_HOST to run)")
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	cfg := &config.Config{
+		InfluxDBHost:   os.Getenv("TEST_INFLUXDB_HOST"),
+		InfluxDBPort:   8086,
+		InfluxDBOrg:    "sotehus",
+		InfluxDBBucket: "power",
+		InfluxDBToken:  os.Getenv("TEST_INFLUXDB_TOKEN"),
+	}
+
+	client, err := NewInfluxDBClient(cfg, logger)
+	if err != nil {
+		t.Skipf("InfluxDB connection failed (expected in CI): %v", err)
+	}
+	defer client.Close()
+
+	if err := client.EnsureBucketExists("solis"); err != nil {
+		t.Fatalf("EnsureBucketExists() error = %v", err)
+	}
+
+	fields := map[string]float64{
+		"power.total":   250.5,
+		"solar.power":   4200.0,
+		"battery.power": -600.0,
+		"battery.SOC":   72.0,
+		"voltage.L1":    231.0, // extra field GetLastSolisRecord should ignore
+	}
+
+	writeTime := time.Now()
+	if err := client.WriteToBucket("solis", "solis_inverter", fields, writeTime); err != nil {
+		t.Fatalf("WriteToBucket() error = %v", err)
+	}
+
+	record, err := client.GetLastSolisRecord()
+	if err != nil {
+		t.Fatalf("GetLastSolisRecord() error = %v", err)
+	}
+
+	if record.GridPower != fields["power.total"] {
+		t.Errorf("GridPower = %v, want %v", record.GridPower, fields["power.total"])
+	}
+	if record.SolarPower != fields["solar.power"] {
+		t.Errorf("SolarPower = %v, want %v", record.SolarPower, fields["solar.power"])
+	}
+	if record.BatteryPower != fields["battery.power"] {
+		t.Errorf("BatteryPower = %v, want %v", record.BatteryPower, fields["battery.power"])
+	}
+	if record.BatterySOC != fields["battery.SOC"] {
+		t.Errorf("BatterySOC = %v, want %v", record.BatterySOC, fields["battery.SOC"])
+	}
+}
+
+func TestWriteToBucketEmptyFieldsIsNoop(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	client := &InfluxDBClient{logger: logger}
+
+	if err := client.WriteToBucket("solis", "solis_inverter", map[string]float64{}, time.Now()); err != nil {
+		t.Errorf("WriteToBucket() with empty fields should be a no-op, got error: %v", err)
 	}
 }
 

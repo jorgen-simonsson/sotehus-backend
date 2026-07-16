@@ -1061,3 +1061,84 @@ func TestFetchParamValue_NotFound(t *testing.T) {
 		t.Fatal("Expected error for non-existent parameter")
 	}
 }
+
+func TestGetSolis_NoInfluxDB(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, nil, nil, logger) // nil InfluxDB client
+
+	req := httptest.NewRequest(http.MethodGet, "/api/solis", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetSolis(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestGetSolis_RouteRegistered(t *testing.T) {
+	router, _ := newTestRouter(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/solis", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	// nil InfluxDB in newTestRouter means 503, not 404 - route exists
+	if rec.Code == http.StatusNotFound {
+		t.Error("Route /api/solis not found")
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestCalculateHouseholdLoad(t *testing.T) {
+	tests := []struct {
+		name         string
+		solarPower   float64
+		batteryPower float64
+		gridPower    float64
+		want         float64
+	}{
+		{
+			name:         "solar covers load, surplus charges battery and exports",
+			solarPower:   5000,
+			batteryPower: 1000, // charging
+			gridPower:    500,  // exporting
+			want:         3500, // 5000 - 1000 - 500
+		},
+		{
+			name:         "low solar, battery and grid both supply the shortfall",
+			solarPower:   200,
+			batteryPower: -800,  // discharging
+			gridPower:    -1000, // importing
+			want:         2000,  // 200 - (-800) - (-1000)
+		},
+		{
+			name:         "no solar, no battery activity, all load from grid import",
+			solarPower:   0,
+			batteryPower: 0,
+			gridPower:    -1500,
+			want:         1500,
+		},
+		{
+			name:         "solar exactly matches load, no grid or battery flow",
+			solarPower:   1200,
+			batteryPower: 0,
+			gridPower:    0,
+			want:         1200,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := calculateHouseholdLoad(tt.solarPower, tt.batteryPower, tt.gridPower)
+			if got != tt.want {
+				t.Errorf("calculateHouseholdLoad(%v, %v, %v) = %v, want %v",
+					tt.solarPower, tt.batteryPower, tt.gridPower, got, tt.want)
+			}
+		})
+	}
+}

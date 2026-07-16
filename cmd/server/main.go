@@ -17,6 +17,7 @@ import (
 	"github.com/jorgen-simonsson/sotehus-backend/internal/services/grid"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/services/price"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/services/solar"
+	"github.com/jorgen-simonsson/sotehus-backend/internal/services/solis"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/state"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/storage"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/storage/params"
@@ -175,6 +176,25 @@ func main() {
 		} else {
 			logger.Info("Local MQTT solar disabled by parameter")
 		}
+	}
+
+	// Start Solis service (MQTT)
+	if cfg.MQTTBrokerHost != "" {
+		solisService, err := solis.NewService(cfg, influxDB, logger)
+		if err != nil {
+			logger.Error("Failed to create Solis service", "error", err)
+		} else {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := solisService.Start(ctx); err != nil {
+					logger.Error("Solis service error", "error", err)
+				}
+			}()
+			logger.Info("Solis service started")
+		}
+	} else {
+		logger.Info("MQTT not configured, Solis service disabled")
 	}
 
 	// Create HTTP router
