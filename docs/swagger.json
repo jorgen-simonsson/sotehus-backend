@@ -374,6 +374,44 @@
                 }
             }
         },
+        "/api/solis": {
+            "get": {
+                "description": "Returns the most recent record from the \"solis\" InfluxDB bucket. household_load is\ncalculated from the power balance: solar_power - battery_power - grid_power, where\ngrid_power is positive when exporting and battery_power is positive when charging.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "energy"
+                ],
+                "summary": "Get latest Solis inverter data",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.SolisResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "No Solis data found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to query Solis data",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "503": {
+                        "description": "InfluxDB not configured",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/timeseries": {
             "get": {
                 "description": "Returns statistics about the historical data stored in InfluxDB",
@@ -492,6 +530,10 @@
                     "type": "number",
                     "example": 14.22
                 },
+                "produced_kwh": {
+                    "type": "number",
+                    "example": 1.5
+                },
                 "spot_price": {
                     "type": "number",
                     "example": 0.45
@@ -531,13 +573,21 @@
                     "type": "string",
                     "example": "2026-02-22T12:00:00+01:00"
                 },
+                "production_benefit": {
+                    "type": "number",
+                    "example": 5.67
+                },
                 "total_consumed_kwh": {
                     "type": "number",
                     "example": 156.78
                 },
                 "total_cost": {
                     "type": "number",
-                    "example": 225.91
+                    "example": 220.24
+                },
+                "total_produced_kwh": {
+                    "type": "number",
+                    "example": 23.45
                 },
                 "unit": {
                     "type": "string",
@@ -584,6 +634,35 @@
                 "status": {
                     "type": "string",
                     "example": "ok"
+                }
+            }
+        },
+        "api.SolisResponse": {
+            "type": "object",
+            "properties": {
+                "battery_power": {
+                    "type": "number",
+                    "example": 1234.1
+                },
+                "battery_soc": {
+                    "type": "number",
+                    "example": 34
+                },
+                "grid_power": {
+                    "type": "number",
+                    "example": 0.23
+                },
+                "household_load": {
+                    "type": "number",
+                    "example": 923.56
+                },
+                "solar_power": {
+                    "type": "number",
+                    "example": 5450.23
+                },
+                "timestamp": {
+                    "type": "string",
+                    "example": "2025-12-07T16:30:00+01:00"
                 }
             }
         },

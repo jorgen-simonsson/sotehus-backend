@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -11,6 +12,9 @@ import (
 	"github.com/jorgen-simonsson/sotehus-backend/internal/config"
 	"github.com/shopspring/decimal"
 )
+
+// ErrNoData is returned when a query finds no matching records.
+var ErrNoData = errors.New("no data found")
 
 // InfluxDBClient handles writing time series data to InfluxDB
 type InfluxDBClient struct {
@@ -132,6 +136,56 @@ func (c *InfluxDBClient) WriteGridData(data map[string]float64, timestamp time.T
 	}
 
 	c.logger.Debug("Wrote grid data to InfluxDB", "fields", len(data))
+	return nil
+}
+
+// EnsureBucketExists creates the given bucket in the client's org if it does not already exist.
+func (c *InfluxDBClient) EnsureBucketExists(bucketName string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	bucketsAPI := c.client.BucketsAPI()
+
+	if _, err := bucketsAPI.FindBucketByName(ctx, bucketName); err == nil {
+		return nil
+	}
+
+	org, err := c.client.OrganizationsAPI().FindOrganizationByName(ctx, c.org)
+	if err != nil {
+		return fmt.Errorf("failed to find organization %q: %w", c.org, err)
+	}
+
+	if _, err := bucketsAPI.CreateBucketWithName(ctx, org, bucketName); err != nil {
+		return fmt.Errorf("failed to create bucket %q: %w", bucketName, err)
+	}
+
+	c.logger.Info("Created InfluxDB bucket", "bucket", bucketName)
+	return nil
+}
+
+// WriteToBucket writes a set of fields as a single point to the given bucket and measurement.
+func (c *InfluxDBClient) WriteToBucket(bucket, measurement string, fields map[string]float64, timestamp time.Time) error {
+	if len(fields) == 0 {
+		return nil
+	}
+
+	pointFields := make(map[string]interface{}, len(fields))
+	for k, v := range fields {
+		pointFields[k] = v
+	}
+
+	p := influxdb2.NewPoint(measurement, nil, pointFields, timestamp)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	writeAPI := c.client.WriteAPIBlocking(c.org, bucket)
+	if err := writeAPI.WritePoint(ctx, p); err != nil {
+		c.logger.Error("Failed to write data to InfluxDB", "bucket", bucket, "error", err, "fields", len(fields))
+		return err
+	}
+
+	c.logger.Debug("Wrote data to InfluxDB", "bucket", bucket, "fields", len(fields))
 	return nil
 }
 
@@ -300,6 +354,67 @@ func (c *InfluxDBClient) GetSoldEnergy(start, stop time.Time) (float64, time.Tim
 
 	sold := stopValue - startValue
 	return sold, startActual, stopActual, nil
+}
+
+// SolisRecord represents the fields of the most recent record written to the
+// "solis" bucket by the Solis MQTT service.
+type SolisRecord struct {
+	Time         time.Time
+	GridPower    float64 // "power.total" — positive = export to grid, negative = import
+	SolarPower   float64 // "solar.power" — inverter AC output
+	BatteryPower float64 // "battery.power" — positive = charging, negative = discharging
+	BatterySOC   float64 // "battery.SOC" — percent, 0-100
+}
+
+// GetLastSolisRecord returns the most recent record from the "solis" bucket's
+// "solis_inverter" measurement. Fields are combined via pivot since they are
+// all written as part of the same point (same timestamp) by the Solis service.
+func (c *InfluxDBClient) GetLastSolisRecord() (*SolisRecord, error) {
+	queryAPI := c.client.QueryAPI(c.org)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	query := `
+		from(bucket: "solis")
+		|> range(start: 0)
+		|> filter(fn: (r) => r._measurement == "solis_inverter")
+		|> filter(fn: (r) => r._field == "power.total" or r._field == "solar.power" or r._field == "battery.power" or r._field == "battery.SOC")
+		|> last()
+		|> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+	`
+
+	result, err := queryAPI.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query last Solis record: %w", err)
+	}
+
+	var record *SolisRecord
+	for result.Next() {
+		r := result.Record()
+		rec := &SolisRecord{Time: r.Time()}
+		if v, ok := r.ValueByKey("power.total").(float64); ok {
+			rec.GridPower = v
+		}
+		if v, ok := r.ValueByKey("solar.power").(float64); ok {
+			rec.SolarPower = v
+		}
+		if v, ok := r.ValueByKey("battery.power").(float64); ok {
+			rec.BatteryPower = v
+		}
+		if v, ok := r.ValueByKey("battery.SOC").(float64); ok {
+			rec.BatterySOC = v
+		}
+		record = rec
+	}
+	if result.Err() != nil {
+		return nil, fmt.Errorf("error reading last Solis record: %w", result.Err())
+	}
+	if record == nil {
+		return nil, ErrNoData
+	}
+
+	return record, nil
 }
 
 // Close closes the InfluxDB client connection

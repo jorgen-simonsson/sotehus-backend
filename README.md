@@ -19,6 +19,7 @@ A Go application that provides real-time energy monitoring data via a REST API.
   - [GET /api/energy/consumed](#get-apienergyconsumed)
   - [GET /api/energy/sold](#get-apienergysold)
   - [GET /api/energy/cost](#get-apienergycost)
+  - [GET /api/solis](#get-apisolis)
   - [GET /health](#get-health)
 - [Persistent Parameters](#persistent-parameters)
   - [Overview](#parameters-overview)
@@ -32,6 +33,7 @@ A Go application that provides real-time energy monitoring data via a REST API.
   - [Price Process](#price-process)
   - [Solar Process](#solar-process)
   - [FFR Process](#ffr-process)
+  - [Solis Process](#solis-process)
 - [Configuration](#configuration)
 - [Project Structure](#project-structure)
 - [Building and Running](#building-and-running)
@@ -56,6 +58,7 @@ The Sotehus system monitors and visualizes energy data for a household with sola
 - **Smart Gateway P1** – A dongle connected to the P1 port of the electrical meter. Emits detailed import/export power, voltage, and current data every 5 seconds over local WiFi. ([smartgateways.se](https://smartgateways.se/))
 - **FFR Sensor** – An Arduino system measuring grid frequency at high precision. Data is sent via serial link to the [ffr-collector](https://github.com/jorgen-simonsson/ffr-collector) service on sotehus-rugged, which converts it to MQTT and publishes to the Mosquitto broker at high rate.
 - **SolarEdge Inverter (Modbus → MQTT)** – A local container running [solaredge2mqtt](https://github.com/DerOetzi/solaredge2mqtt) reads solar production data directly from the SolarEdge inverter via Modbus and publishes it to the MQTT topic `solaredge/modbus/inverter`. This replaces the cloud API when the `use_local_mqtt_solar` parameter is enabled.
+- **Solis Inverter (Modbus → MQTT)** – A local `solis2mqtt` daemon reads grid meter and battery/inverter telemetry from a Solis hybrid inverter via Modbus RTU and publishes a flat JSON payload to the MQTT topic `solis/modbus` every ~1 second. See `SOLIS_MQTT_PAYLOAD.md` for the full payload schema.
 
 **External APIs:**
 
@@ -82,6 +85,8 @@ All data is written to the `power_monitoring` measurement. The grid service aggr
 | `solar_energy_ack` | MQTT `solaredge/modbus/inverter` → `energytotal` | Lifetime solar energy accumulator (Wh) |
 | `solar_frequency` | MQTT `solaredge/modbus/inverter` → `ac.frequency` | AC frequency reported by the inverter (Hz) |
 
+Solis inverter data is written separately, to its own `solis` bucket (created automatically on startup if it doesn't exist) rather than into `power_monitoring`. Each MQTT payload received on `solis/modbus` becomes one record in the `solis_inverter` measurement, with every property from the payload (`voltage.L1`, `current.L1`, `power.total`, `battery.SOC`, `battery.power`, `solar.power`, etc. — see `SOLIS_MQTT_PAYLOAD.md`) written verbatim as a field, unmodified.
+
 ### Frontend
 
 The frontend is a PWA ([sotehus-pwa](https://github.com/jorgen-simonsson/sotehus-pwa)) running as a Docker container on sotehus-pi5. It accesses the backend via Tailscale to view data and edit parameters.
@@ -103,6 +108,7 @@ graph LR
         PWA["Frontend PWA"]
         SQLITE["SQLite"]
         SE2MQTT["solaredge2mqtt<br/>(Modbus → MQTT)"]
+        SOLIS2MQTT["solis2mqtt<br/>(Modbus → MQTT)"]
     end
 
     subgraph External APIs
@@ -113,6 +119,9 @@ graph LR
     INVERTER["SolarEdge Inverter"] -- Modbus --> SE2MQTT
     SE2MQTT -- MQTT --> MOSQUITTO
 
+    SOLIS_INVERTER["Solis Hybrid Inverter"] -- Modbus RTU --> SOLIS2MQTT
+    SOLIS2MQTT -- MQTT --> MOSQUITTO
+
     P1["Smart Gateway P1<br/>(electrical meter)"] -- MQTT / WiFi --> MOSQUITTO
     FFR_SENSOR -- serial --> FFR_COLLECTOR
     FFR_COLLECTOR -- MQTT --> MOSQUITTO
@@ -120,10 +129,12 @@ graph LR
     MOSQUITTO -- grid data --> BACKEND
     MOSQUITTO -- frequency data --> BACKEND
     MOSQUITTO -- solar production --> BACKEND
+    MOSQUITTO -- solis data --> BACKEND
     SOLAREDGE -- solar production (cloud API, fallback) --> BACKEND
     SPOTPRICE -- spot prices --> BACKEND
 
     BACKEND -- write every 5s --> INFLUXDB
+    BACKEND -- write every ~1s (solis bucket) --> INFLUXDB
     BACKEND -- read/write --> SQLITE
     INFLUXDB -- cron backup --> BACKUP
 
@@ -337,6 +348,35 @@ If no spot price is recorded for a given time window, the most recent previous v
 - `500` – Failed to fetch parameters or query InfluxDB
 - `503` – InfluxDB or parameter store not configured
 
+### `GET /api/solis`
+
+Returns the most recent record from the `solis` InfluxDB bucket, with household load derived from the grid/battery/solar power balance.
+
+**Response:**
+```json
+{
+    "timestamp": "2025-12-07T16:30:00+01:00",
+    "grid_power": 0.23,
+    "solar_power": 5450.23,
+    "battery_power": 1234.10,
+    "household_load": 923.56,
+    "battery_soc": 34
+}
+```
+
+**Field descriptions:**
+- `timestamp` – Time of the most recent Solis record (local time)
+- `grid_power` – From `power.total`. Positive = exporting to the grid, negative = importing
+- `solar_power` – From `solar.power` (inverter AC output)
+- `battery_power` – From `battery.power`. Positive = charging, negative = discharging
+- `household_load` – Calculated, not read directly: `solar_power − battery_power − grid_power`. This is the power balance identity — what flows in (solar production + battery discharge + grid import) must equal what flows out (household load + battery charge + grid export)
+- `battery_soc` – From `battery.SOC` (%)
+
+**Errors:**
+- `404` – No data found in the `solis` bucket yet
+- `500` – Failed to query InfluxDB
+- `503` – InfluxDB not configured
+
 ### `GET /health`
 
 Health check endpoint.
@@ -489,7 +529,7 @@ Updates an existing parameter's description and content.
 
 ## Architecture
 
-The application runs three background processes alongside the HTTP server:
+The application runs background processes alongside the HTTP server:
 
 ### Grid Process
 - Subscribes to multiple MQTT topics defined in `GridTopics` for real-time power and energy data
@@ -535,6 +575,13 @@ Each entry maps an MQTT topic to an InfluxDB field name. All values are aggregat
 - Handles high-frequency data (many updates per second) thread-safely
 - Frequency values are accumulated between InfluxDB write cycles; the **average** frequency is written to InfluxDB each cycle (not the last value)
 - The API (`/api/data`) returns the same averaged frequency that was last written to InfluxDB
+
+### Solis Process
+- Subscribes to the MQTT topic `solis/modbus`, published by a local `solis2mqtt` daemon roughly once per second (see `SOLIS_MQTT_PAYLOAD.md` for the payload schema)
+- Ensures the `solis` InfluxDB bucket exists on startup, creating it automatically if missing
+- Writes every received MQTT payload as one record in the `solis_inverter` measurement of the `solis` bucket — all fields from the payload are stored verbatim, with no aggregation, filtering, or interpretation
+- Independent of the Grid write cycle and the shared state manager — not part of `/api/data`, and not part of the `power_monitoring` measurement used by the Grid process
+- Exposed via `GET /api/solis`, which reads the latest record back out of the `solis` bucket and derives `household_load` from the power balance
 
 ## Configuration
 
@@ -593,9 +640,11 @@ SQLITE_DB_PATH=./data/params.db
 │   │   │   └── grid.go          # MQTT subscriber for grid consumption
 │   │   ├── price/
 │   │   │   └── price.go         # Spot price fetcher
-│   │   └── solar/
-│   │       ├── solar.go         # SolarEdge cloud API client
-│   │       └── mqtt.go          # MQTT subscriber for local solar data (Modbus bridge)
+│   │   ├── solar/
+│   │   │   ├── solar.go         # SolarEdge cloud API client
+│   │   │   └── mqtt.go          # MQTT subscriber for local solar data (Modbus bridge)
+│   │   └── solis/
+│   │       └── mqtt.go          # MQTT subscriber for Solis inverter data, writes to "solis" InfluxDB bucket
 │   ├── storage/
 │   │   ├── influxdb.go          # InfluxDB client
 │   │   └── params/
@@ -610,7 +659,8 @@ SQLITE_DB_PATH=./data/params.db
 ├── go.sum
 ├── .env.example
 ├── Makefile
-└── README.md
+├── README.md
+└── SOLIS_MQTT_PAYLOAD.md        # Solis MQTT payload schema reference
 ```
 
 ## Building and Running
@@ -677,12 +727,29 @@ go test -v ./internal/storage/params
 | `internal/services/price` | ~30% | Spot price fetching and matching |
 | `internal/services/grid` | ~19% | MQTT subscription (requires broker for full testing) |
 | `internal/services/ffr` | ~30% | FFR frequency parsing and MQTT subscription |
+| `internal/services/solis` | ~42% | MQTT subscriber for Solis inverter data (write path requires database for full testing) |
 | `internal/storage` | ~3% | InfluxDB client (requires database for full testing) |
 | `internal/models` | N/A | Data structures (no executable code) |
 
 Note: Some packages have lower coverage because they require external services (MQTT broker, InfluxDB, HTTP APIs) for complete integration testing.
 
 ## Changelog
+
+### 2026-07-16 Ver 2.2.0
+- New endpoint: `GET /api/solis` – returns the most recent record from the `solis` InfluxDB bucket
+  - New `InfluxDBClient.GetLastSolisRecord` queries the last point of `power.total`, `solar.power`, `battery.power` and `battery.SOC`, combining them via Flux `pivot` since they share a single write timestamp
+  - `household_load` is calculated (not stored) from the power balance identity: `solar_power − battery_power − grid_power`
+  - New `storage.ErrNoData` sentinel error, mapped to `404` when the bucket has no data yet
+  - Swagger docs regenerated to include `api.SolisResponse`
+
+### 2026-07-16 Ver 2.1.0
+- Added a new data source and background process: **Solis inverter**
+  - New MQTT subscriber (`internal/services/solis/mqtt.go`) listens on the `solis/modbus` topic published by a local `solis2mqtt` daemon
+  - Payload schema documented in `SOLIS_MQTT_PAYLOAD.md` (grid meter voltage/current/power per phase, battery SOC/power, solar power, meter type)
+  - Data is written to a **separate** InfluxDB bucket (`solis`, auto-created on startup if missing), measurement `solis_inverter` — independent of the `power_monitoring` measurement used by the Grid process
+  - Every field in each received payload is written verbatim, with no aggregation or interpretation
+  - New `InfluxDBClient.EnsureBucketExists` and `InfluxDBClient.WriteToBucket` methods support writing to buckets other than the default configured one
+  - Solis data is not yet exposed via any HTTP endpoint
 
 ### 2026-04-05 Ver 2.0.0
 - **Major performance improvement** for `GET /api/energy/cost`: response time reduced from ~15s to <0.2s for a calendar month

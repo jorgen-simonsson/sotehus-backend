@@ -296,6 +296,74 @@ func (h *Handler) GetEnergySold(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// SolisResponse represents the response for /api/solis
+type SolisResponse struct {
+	Timestamp     string  `json:"timestamp" example:"2025-12-07T16:30:00+01:00"`
+	GridPower     float64 `json:"grid_power" example:"0.23"`
+	SolarPower    float64 `json:"solar_power" example:"5450.23"`
+	BatteryPower  float64 `json:"battery_power" example:"1234.10"`
+	HouseholdLoad float64 `json:"household_load" example:"923.56"`
+	BatterySOC    float64 `json:"battery_soc" example:"34"`
+}
+
+// GetSolis handles GET /api/solis requests
+// @Summary Get latest Solis inverter data
+// @Description Returns the most recent record from the "solis" InfluxDB bucket. household_load is
+// @Description calculated from the power balance: solar_power - battery_power - grid_power, where
+// @Description grid_power is positive when exporting and battery_power is positive when charging.
+// @Tags energy
+// @Produce json
+// @Success 200 {object} SolisResponse
+// @Failure 404 {string} string "No Solis data found"
+// @Failure 500 {string} string "Failed to query Solis data"
+// @Failure 503 {string} string "InfluxDB not configured"
+// @Router /api/solis [get]
+func (h *Handler) GetSolis(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if h.influxDB == nil {
+		h.logger.Error("InfluxDB client not available")
+		http.Error(w, "InfluxDB not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	record, err := h.influxDB.GetLastSolisRecord()
+	if err != nil {
+		if errors.Is(err, storage.ErrNoData) {
+			http.Error(w, "No Solis data found", http.StatusNotFound)
+			return
+		}
+		h.logger.Error("Failed to get last Solis record", "error", err)
+		http.Error(w, "Failed to query Solis data", http.StatusInternalServerError)
+		return
+	}
+
+	response := SolisResponse{
+		Timestamp:     record.Time.Local().Format(time.RFC3339),
+		GridPower:     record.GridPower,
+		SolarPower:    record.SolarPower,
+		BatteryPower:  record.BatteryPower,
+		HouseholdLoad: calculateHouseholdLoad(record.SolarPower, record.BatteryPower, record.GridPower),
+		BatterySOC:    record.BatterySOC,
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		h.logger.Error("Failed to encode response", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+}
+
+// calculateHouseholdLoad derives household consumption from the power balance
+// between grid, battery and solar. What flows in (solar production + battery
+// discharge + grid import) equals what flows out (household load + battery
+// charge + grid export). gridPower is positive when exporting, negative when
+// importing; batteryPower is positive when charging, negative when discharging.
+func calculateHouseholdLoad(solarPower, batteryPower, gridPower float64) float64 {
+	return solarPower - batteryPower - gridPower
+}
+
 // GetAllParams handles GET /api/params requests
 // @Summary Get all persistent parameters
 // @Description Returns all persistent configuration parameters

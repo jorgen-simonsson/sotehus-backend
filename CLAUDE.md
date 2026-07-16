@@ -33,7 +33,7 @@ Swagger UI is at `http://localhost:8080/swagger/index.html`.
 
 ## Architecture
 
-The entry point (`cmd/server/main.go`) wires up all components and starts four independent background goroutines alongside the HTTP server. Each goroutine is driven by a `context.Context` and stops cleanly on SIGINT/SIGTERM.
+The entry point (`cmd/server/main.go`) wires up all components and starts independent background goroutines alongside the HTTP server. Each goroutine is driven by a `context.Context` and stops cleanly on SIGINT/SIGTERM.
 
 ### Shared state
 
@@ -48,8 +48,11 @@ The entry point (`cmd/server/main.go`) wires up all components and starts four i
 | Price | `internal/services/price` | `elprisetjustnu.se` REST API | No |
 | Solar (cloud) | `internal/services/solar/solar.go` | SolarEdge Monitoring API | No |
 | Solar (MQTT) | `internal/services/solar/mqtt.go` | MQTT `solaredge/modbus/inverter` | No |
+| Solis | `internal/services/solis` | MQTT topic `solis/modbus` (see `SOLIS_MQTT_PAYLOAD.md`) | Yes — every payload written verbatim to the separate `solis` bucket, measurement `solis_inverter` |
 
-The **Grid service** is the InfluxDB writer for the whole system. It aggregates fields from multiple MQTT topics (defined in `grid.GridTopics`) and also pulls `solarEnergyAck` and `solarFrequency` from the state manager to include in each write.
+The **Grid service** is the InfluxDB writer for the whole system's primary `power_monitoring` measurement. It aggregates fields from multiple MQTT topics (defined in `grid.GridTopics`) and also pulls `solarEnergyAck` and `solarFrequency` from the state manager to include in each write.
+
+The **Solis service** writes to a separate InfluxDB bucket (`solis`, created automatically on startup if missing) rather than the shared `power_monitoring` measurement — each MQTT payload becomes one record with all of that payload's fields, unmodified.
 
 The **FFR service** accumulates frequency samples into the state manager. `state.Manager.GetAndResetAverageFrequency()` is called by the Grid service each write cycle — it computes the average of all samples since the last call and resets the accumulator.
 
