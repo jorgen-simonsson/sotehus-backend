@@ -20,6 +20,7 @@ A Go application that provides real-time energy monitoring data via a REST API.
   - [GET /api/energy/sold](#get-apienergysold)
   - [GET /api/energy/cost](#get-apienergycost)
   - [GET /api/solis](#get-apisolis)
+  - [GET /api/solis/soc](#get-apisolissoc)
   - [GET /health](#get-health)
 - [Persistent Parameters](#persistent-parameters)
   - [Overview](#parameters-overview)
@@ -377,6 +378,40 @@ Returns the most recent record from the `solis` InfluxDB bucket, with household 
 - `500` – Failed to query InfluxDB
 - `503` – InfluxDB not configured
 
+### `GET /api/solis/soc`
+
+Returns battery state of charge as a time series, averaged into fixed-size windows across the requested range.
+
+The endpoint queries the `battery.SOC` field in the `solis` bucket and downsamples it with Flux `aggregateWindow(every: <am>m, fn: mean)`. One data point is returned per window that contains data — e.g. a 24-hour range with `am=15` returns 96 data points.
+
+**Parameters:**
+- `start` – Start timestamp in RFC3339 format (e.g., `2026-02-01T00:00:00+01:00`)
+- `stop` – Stop timestamp in RFC3339 format (e.g., `2026-02-21T00:00:00+01:00`)
+- `am` – Aggregation window in minutes (e.g., `15`)
+
+**Response:**
+```json
+[
+    {
+        "timestamp": "2026-02-01T00:15:00+01:00",
+        "value": 78.5
+    },
+    {
+        "timestamp": "2026-02-01T00:30:00+01:00",
+        "value": 79.1
+    }
+]
+```
+
+**Field descriptions:**
+- `timestamp` – Window timestamp (local time)
+- `value` – Mean `battery.SOC` (%) over that window
+
+**Errors:**
+- `400` – Missing or invalid start/stop/am parameter, or stop is before start
+- `500` – Failed to query InfluxDB
+- `503` – InfluxDB not configured
+
 ### `GET /health`
 
 Health check endpoint.
@@ -582,6 +617,7 @@ Each entry maps an MQTT topic to an InfluxDB field name. All values are aggregat
 - Writes every received MQTT payload as one record in the `solis_inverter` measurement of the `solis` bucket — all fields from the payload are stored verbatim, with no aggregation, filtering, or interpretation
 - Independent of the Grid write cycle and the shared state manager — not part of `/api/data`, and not part of the `power_monitoring` measurement used by the Grid process
 - Exposed via `GET /api/solis`, which reads the latest record back out of the `solis` bucket and derives `household_load` from the power balance
+- Historical SOC exposed via `GET /api/solis/soc`, which averages `battery.SOC` into caller-specified time windows
 
 ## Configuration
 
@@ -719,21 +755,27 @@ go test -v ./internal/storage/params
 
 | Package | Coverage | Description |
 |---------|----------|-------------|
-| `internal/config` | 100% | Configuration loading and environment variables |
 | `internal/state` | 100% | Thread-safe state management |
-| `internal/api` | ~67% | HTTP handlers, routing, and CORS |
-| `internal/storage/params` | ~90% | SQLite parameter store (in-memory tests) |
-| `internal/services/solar` | ~46% | SolarEdge client and sunrise/sunset calculations |
-| `internal/services/price` | ~30% | Spot price fetching and matching |
-| `internal/services/grid` | ~19% | MQTT subscription (requires broker for full testing) |
-| `internal/services/ffr` | ~30% | FFR frequency parsing and MQTT subscription |
+| `internal/config` | ~95% | Configuration loading and environment variables |
+| `internal/storage/params` | ~70% | SQLite parameter store (in-memory tests) |
+| `internal/api` | ~50% | HTTP handlers, routing, and CORS |
 | `internal/services/solis` | ~42% | MQTT subscriber for Solis inverter data (write path requires database for full testing) |
-| `internal/storage` | ~3% | InfluxDB client (requires database for full testing) |
+| `internal/services/price` | ~32% | Spot price fetching and matching |
+| `internal/services/solar` | ~27% | SolarEdge client and sunrise/sunset calculations |
+| `internal/services/ffr` | ~19% | FFR frequency parsing and MQTT subscription |
+| `internal/services/grid` | ~13% | MQTT subscription (requires broker for full testing) |
+| `internal/storage` | ~2% | InfluxDB client (requires database for full testing) |
 | `internal/models` | N/A | Data structures (no executable code) |
 
-Note: Some packages have lower coverage because they require external services (MQTT broker, InfluxDB, HTTP APIs) for complete integration testing.
+Note: Some packages have lower coverage because they require external services (MQTT broker, InfluxDB, HTTP APIs) for complete integration testing. For example, `GetSOC` (backing `GET /api/solis/soc`) has handler-level tests for parameter validation and route registration, but the underlying `storage.GetSOCSeries` Flux query — like the rest of `internal/storage` — is only verified manually against a live InfluxDB instance.
 
 ## Changelog
+
+### 2026-07-24 Ver 2.3.0
+- New endpoint: `GET /api/solis/soc` – returns battery state of charge as a time series, averaged into caller-specified windows
+  - New `InfluxDBClient.GetSOCSeries` queries `battery.SOC` in the `solis` bucket and downsamples with Flux `aggregateWindow(every: <am>m, fn: mean)`
+  - Takes `start`, `stop` (RFC3339) and `am` (aggregation window in minutes) query parameters — e.g. a 24-hour range with `am=15` returns 96 data points
+  - Swagger docs regenerated to include `api.SOCDataPoint`
 
 ### 2026-07-16 Ver 2.2.0
 - New endpoint: `GET /api/solis` – returns the most recent record from the `solis` InfluxDB bucket

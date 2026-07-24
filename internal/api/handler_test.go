@@ -1094,6 +1094,146 @@ func TestGetSolis_RouteRegistered(t *testing.T) {
 	}
 }
 
+func TestGetSOC_NoInfluxDB(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, nil, nil, logger) // nil InfluxDB client
+
+	req := httptest.NewRequest(http.MethodGet, "/api/solis/soc?start=2026-02-01T00:00:00Z&stop=2026-02-02T00:00:00Z&am=15", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetSOC(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestGetSOC_RouteRegistered(t *testing.T) {
+	router, _ := newTestRouter(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/solis/soc?start=2026-02-01T00:00:00Z&stop=2026-02-02T00:00:00Z&am=15", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	// nil InfluxDB in newTestRouter means 503, not 404 - route exists
+	if rec.Code == http.StatusNotFound {
+		t.Error("Route /api/solis/soc not found")
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestGetSOC_MissingStart(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, &storage.InfluxDBClient{}, nil, logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/solis/soc?stop=2026-02-02T00:00:00Z&am=15", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetSOC(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetSOC_MissingStop(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, &storage.InfluxDBClient{}, nil, logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/solis/soc?start=2026-02-01T00:00:00Z&am=15", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetSOC(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetSOC_MissingAM(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, &storage.InfluxDBClient{}, nil, logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/solis/soc?start=2026-02-01T00:00:00Z&stop=2026-02-02T00:00:00Z", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetSOC(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetSOC_InvalidAM(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, &storage.InfluxDBClient{}, nil, logger)
+
+	tests := []string{"abc", "0", "-15"}
+	for _, am := range tests {
+		req := httptest.NewRequest(http.MethodGet, "/api/solis/soc?start=2026-02-01T00:00:00Z&stop=2026-02-02T00:00:00Z&am="+am, nil)
+		rec := httptest.NewRecorder()
+
+		handler.GetSOC(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("am=%q: Status code = %d, want %d", am, rec.Code, http.StatusBadRequest)
+		}
+	}
+}
+
+func TestGetSOC_InvalidStartFormat(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, &storage.InfluxDBClient{}, nil, logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/solis/soc?start=bad&stop=2026-02-02T00:00:00Z&am=15", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetSOC(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetSOC_InvalidStopFormat(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, &storage.InfluxDBClient{}, nil, logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/solis/soc?start=2026-02-01T00:00:00Z&stop=bad&am=15", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetSOC(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetSOC_StopBeforeStart(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, &storage.InfluxDBClient{}, nil, logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/solis/soc?start=2026-02-02T00:00:00Z&stop=2026-02-01T00:00:00Z&am=15", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetSOC(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
 func TestCalculateHouseholdLoad(t *testing.T) {
 	tests := []struct {
 		name         string

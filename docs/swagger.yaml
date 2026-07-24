@@ -109,6 +109,15 @@ definitions:
         example: ok
         type: string
     type: object
+  api.SOCDataPoint:
+    properties:
+      timestamp:
+        example: "2026-02-22T00:15:00+01:00"
+        type: string
+      value:
+        example: 78.5
+        type: number
+    type: object
   api.SolisResponse:
     properties:
       battery_power:
@@ -535,6 +544,51 @@ paths:
           schema:
             type: string
       summary: Get latest Solis inverter data
+      tags:
+      - energy
+  /api/solis/soc:
+    get:
+      description: |-
+        Returns the battery state of charge averaged into windows of the given size (in minutes)
+        across the requested time range, e.g. a 24h range with am=15 returns 96 data points.
+      parameters:
+      - description: Start timestamp (RFC3339 format, e.g. 2026-02-01T00:00:00+01:00)
+        in: query
+        name: start
+        required: true
+        type: string
+      - description: Stop timestamp (RFC3339 format, e.g. 2026-02-21T00:00:00+01:00)
+        in: query
+        name: stop
+        required: true
+        type: string
+      - description: Aggregation window in minutes (e.g. 15)
+        in: query
+        name: am
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/api.SOCDataPoint'
+            type: array
+        "400":
+          description: Invalid start/stop/am parameter
+          schema:
+            type: string
+        "500":
+          description: Failed to query SOC data
+          schema:
+            type: string
+        "503":
+          description: InfluxDB not configured
+          schema:
+            type: string
+      summary: Get battery SOC data points for a period
       tags:
       - energy
   /api/timeseries:
