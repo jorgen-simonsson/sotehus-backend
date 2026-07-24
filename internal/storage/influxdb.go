@@ -417,6 +417,54 @@ func (c *InfluxDBClient) GetLastSolisRecord() (*SolisRecord, error) {
 	return record, nil
 }
 
+// SOCDataPoint represents a single averaged battery SOC value for a time window.
+type SOCDataPoint struct {
+	Time  time.Time `json:"time"`
+	Value float64   `json:"value"`
+}
+
+// GetSOCSeries returns the battery SOC ("battery.SOC" field in the "solis" bucket's
+// "solis_inverter" measurement) averaged into windows of windowMinutes across the
+// given time range. One data point is returned per window that contains data.
+func (c *InfluxDBClient) GetSOCSeries(start, stop time.Time, windowMinutes int) ([]SOCDataPoint, error) {
+	queryAPI := c.client.QueryAPI(c.org)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	query := fmt.Sprintf(`
+		from(bucket: "solis")
+		|> range(start: %s, stop: %s)
+		|> filter(fn: (r) => r._measurement == "solis_inverter")
+		|> filter(fn: (r) => r._field == "battery.SOC")
+		|> aggregateWindow(every: %dm, fn: mean, createEmpty: false)
+		|> sort(columns: ["_time"])
+	`, start.Format(time.RFC3339), stop.Format(time.RFC3339), windowMinutes)
+
+	result, err := queryAPI.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query SOC series: %w", err)
+	}
+
+	var points []SOCDataPoint
+	for result.Next() {
+		record := result.Record()
+		v, ok := record.Value().(float64)
+		if !ok {
+			continue
+		}
+		points = append(points, SOCDataPoint{
+			Time:  record.Time(),
+			Value: v,
+		})
+	}
+	if result.Err() != nil {
+		return nil, fmt.Errorf("error reading SOC series result: %w", result.Err())
+	}
+
+	return points, nil
+}
+
 // Close closes the InfluxDB client connection
 func (c *InfluxDBClient) Close() {
 	c.client.Close()

@@ -419,6 +419,70 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/solis/soc": {
+            "get": {
+                "description": "Returns the battery state of charge averaged into windows of the given size (in minutes)\nacross the requested time range, e.g. a 24h range with am=15 returns 96 data points.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "energy"
+                ],
+                "summary": "Get battery SOC data points for a period",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Start timestamp (RFC3339 format, e.g. 2026-02-01T00:00:00+01:00)",
+                        "name": "start",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Stop timestamp (RFC3339 format, e.g. 2026-02-21T00:00:00+01:00)",
+                        "name": "stop",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Aggregation window in minutes (e.g. 15)",
+                        "name": "am",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/api.SOCDataPoint"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid start/stop/am parameter",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to query SOC data",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "503": {
+                        "description": "InfluxDB not configured",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/timeseries": {
             "get": {
                 "description": "Returns statistics about the historical data stored in InfluxDB",
@@ -641,6 +705,19 @@ const docTemplate = `{
                 "status": {
                     "type": "string",
                     "example": "ok"
+                }
+            }
+        },
+        "api.SOCDataPoint": {
+            "type": "object",
+            "properties": {
+                "timestamp": {
+                    "type": "string",
+                    "example": "2026-02-22T00:15:00+01:00"
+                },
+                "value": {
+                    "type": "number",
+                    "example": 78.5
                 }
             }
         },

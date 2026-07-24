@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/jorgen-simonsson/sotehus-backend/internal/state"
@@ -346,6 +347,98 @@ func (h *Handler) GetSolis(w http.ResponseWriter, r *http.Request) {
 		BatteryPower:  record.BatteryPower,
 		HouseholdLoad: calculateHouseholdLoad(record.SolarPower, record.BatteryPower, record.GridPower),
 		BatterySOC:    record.BatterySOC,
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		h.logger.Error("Failed to encode response", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+}
+
+// SOCDataPoint represents a single averaged battery SOC value for a time window.
+type SOCDataPoint struct {
+	Timestamp string  `json:"timestamp" example:"2026-02-22T00:15:00+01:00"`
+	Value     float64 `json:"value" example:"78.5"`
+}
+
+// GetSOC handles GET /api/solis/soc requests
+// @Summary Get battery SOC data points for a period
+// @Description Returns the battery state of charge averaged into windows of the given size (in minutes)
+// @Description across the requested time range, e.g. a 24h range with am=15 returns 96 data points.
+// @Tags energy
+// @Produce json
+// @Param start query string true "Start timestamp (RFC3339 format, e.g. 2026-02-01T00:00:00+01:00)"
+// @Param stop query string true "Stop timestamp (RFC3339 format, e.g. 2026-02-21T00:00:00+01:00)"
+// @Param am query int true "Aggregation window in minutes (e.g. 15)"
+// @Success 200 {array} SOCDataPoint
+// @Failure 400 {string} string "Invalid start/stop/am parameter"
+// @Failure 500 {string} string "Failed to query SOC data"
+// @Failure 503 {string} string "InfluxDB not configured"
+// @Router /api/solis/soc [get]
+func (h *Handler) GetSOC(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if h.influxDB == nil {
+		h.logger.Error("InfluxDB client not available")
+		http.Error(w, "InfluxDB not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	startStr := r.URL.Query().Get("start")
+	if startStr == "" {
+		http.Error(w, "Missing required parameter: start", http.StatusBadRequest)
+		return
+	}
+	startTime, err := time.Parse(time.RFC3339, startStr)
+	if err != nil {
+		h.logger.Error("Invalid start parameter", "value", startStr, "error", err)
+		http.Error(w, "Invalid start parameter. Use RFC3339 format (e.g. 2026-02-01T00:00:00+01:00)", http.StatusBadRequest)
+		return
+	}
+
+	stopStr := r.URL.Query().Get("stop")
+	if stopStr == "" {
+		http.Error(w, "Missing required parameter: stop", http.StatusBadRequest)
+		return
+	}
+	stopTime, err := time.Parse(time.RFC3339, stopStr)
+	if err != nil {
+		h.logger.Error("Invalid stop parameter", "value", stopStr, "error", err)
+		http.Error(w, "Invalid stop parameter. Use RFC3339 format (e.g. 2026-02-21T00:00:00+01:00)", http.StatusBadRequest)
+		return
+	}
+
+	if !stopTime.After(startTime) {
+		http.Error(w, "Stop timestamp must be after start timestamp", http.StatusBadRequest)
+		return
+	}
+
+	amStr := r.URL.Query().Get("am")
+	if amStr == "" {
+		http.Error(w, "Missing required parameter: am", http.StatusBadRequest)
+		return
+	}
+	am, err := strconv.Atoi(amStr)
+	if err != nil || am <= 0 {
+		http.Error(w, "Invalid am parameter. Must be a positive integer number of minutes", http.StatusBadRequest)
+		return
+	}
+
+	points, err := h.influxDB.GetSOCSeries(startTime, stopTime, am)
+	if err != nil {
+		h.logger.Error("Failed to get SOC series", "start", startStr, "stop", stopStr, "am", am, "error", err)
+		http.Error(w, "Failed to query SOC data: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	response := make([]SOCDataPoint, len(points))
+	for i, p := range points {
+		response[i] = SOCDataPoint{
+			Timestamp: p.Time.Local().Format(time.RFC3339),
+			Value:     p.Value,
+		}
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
