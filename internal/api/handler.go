@@ -448,6 +448,132 @@ func (h *Handler) GetSOC(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// WeatherReading represents a single value/unit pair from the weather station.
+type WeatherReading struct {
+	Value         float64 `json:"value" example:"21.5"`
+	UnitOfMeasure string  `json:"unitOfMeasure" example:"C"`
+}
+
+// WeatherResponse represents the response for /api/weather
+type WeatherResponse struct {
+	Timestamp string                    `json:"timestamp" example:"2026-02-22T00:15:00+01:00"`
+	Readings  map[string]WeatherReading `json:"readings"`
+}
+
+// GetWeather handles GET /api/weather requests
+// @Summary Get latest weather station readings
+// @Description Returns every value last received from the local weather station over MQTT
+// @Tags weather
+// @Produce json
+// @Success 200 {object} WeatherResponse
+// @Failure 404 {string} string "No weather data received yet"
+// @Router /api/weather [get]
+func (h *Handler) GetWeather(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	data := h.state.GetWeatherData()
+	if !data.Valid {
+		http.Error(w, "No weather data received yet", http.StatusNotFound)
+		return
+	}
+
+	readings := make(map[string]WeatherReading, len(data.Readings))
+	for name, rd := range data.Readings {
+		readings[name] = WeatherReading{Value: rd.Value, UnitOfMeasure: rd.UnitOfMeasure}
+	}
+
+	response := WeatherResponse{
+		Timestamp: data.LastUpdate.Local().Format(time.RFC3339),
+		Readings:  readings,
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		h.logger.Error("Failed to encode response", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+}
+
+// WeatherHistoryRecord represents every weather value recorded at a single point in time.
+type WeatherHistoryRecord struct {
+	Timestamp string             `json:"timestamp" example:"2026-02-22T00:15:00+01:00"`
+	Values    map[string]float64 `json:"values"`
+}
+
+// GetWeatherHistory handles GET /api/weather/history requests
+// @Summary Get weather records for a period
+// @Description Returns every weather record stored in the "weather" InfluxDB bucket between start and stop, with timestamps
+// @Tags weather
+// @Produce json
+// @Param start query string true "Start timestamp (RFC3339 format, e.g. 2026-02-01T00:00:00+01:00)"
+// @Param stop query string true "Stop timestamp (RFC3339 format, e.g. 2026-02-21T00:00:00+01:00)"
+// @Success 200 {array} WeatherHistoryRecord
+// @Failure 400 {string} string "Invalid start/stop parameter"
+// @Failure 500 {string} string "Failed to query weather data"
+// @Failure 503 {string} string "InfluxDB not configured"
+// @Router /api/weather/history [get]
+func (h *Handler) GetWeatherHistory(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if h.influxDB == nil {
+		h.logger.Error("InfluxDB client not available")
+		http.Error(w, "InfluxDB not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	startStr := r.URL.Query().Get("start")
+	if startStr == "" {
+		http.Error(w, "Missing required parameter: start", http.StatusBadRequest)
+		return
+	}
+	startTime, err := time.Parse(time.RFC3339, startStr)
+	if err != nil {
+		h.logger.Error("Invalid start parameter", "value", startStr, "error", err)
+		http.Error(w, "Invalid start parameter. Use RFC3339 format (e.g. 2026-02-01T00:00:00+01:00)", http.StatusBadRequest)
+		return
+	}
+
+	stopStr := r.URL.Query().Get("stop")
+	if stopStr == "" {
+		http.Error(w, "Missing required parameter: stop", http.StatusBadRequest)
+		return
+	}
+	stopTime, err := time.Parse(time.RFC3339, stopStr)
+	if err != nil {
+		h.logger.Error("Invalid stop parameter", "value", stopStr, "error", err)
+		http.Error(w, "Invalid stop parameter. Use RFC3339 format (e.g. 2026-02-21T00:00:00+01:00)", http.StatusBadRequest)
+		return
+	}
+
+	if !stopTime.After(startTime) {
+		http.Error(w, "Stop timestamp must be after start timestamp", http.StatusBadRequest)
+		return
+	}
+
+	records, err := h.influxDB.GetWeatherRange(startTime, stopTime)
+	if err != nil {
+		h.logger.Error("Failed to get weather range", "start", startStr, "stop", stopStr, "error", err)
+		http.Error(w, "Failed to query weather data: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	response := make([]WeatherHistoryRecord, len(records))
+	for i, rec := range records {
+		response[i] = WeatherHistoryRecord{
+			Timestamp: rec.Time.Local().Format(time.RFC3339),
+			Values:    rec.Values,
+		}
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		h.logger.Error("Failed to encode response", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+}
+
 // calculateHouseholdLoad derives household consumption from the power balance
 // between grid, battery and solar. What flows in (solar production + battery
 // discharge + grid import) equals what flows out (household load + battery

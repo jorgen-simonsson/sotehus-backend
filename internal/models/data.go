@@ -77,3 +77,16 @@ type SolarEdgePowerFlow struct {
 type MQTTPayload struct {
 	Power float64 `json:"power"`
 }
+
+// WeatherReading represents a single value/unit pair from the local weather station.
+type WeatherReading struct {
+	Value         float64 `json:"value" example:"21.5"`
+	UnitOfMeasure string  `json:"unitOfMeasure" example:"C"`
+}
+
+// WeatherData represents the latest set of readings received from the weather station over MQTT
+type WeatherData struct {
+	Valid      bool                      `json:"valid" example:"true"`
+	Readings   map[string]WeatherReading `json:"readings"`
+	LastUpdate time.Time                 `json:"lastUpdate" example:"2025-12-07T16:30:00+01:00"`
+}

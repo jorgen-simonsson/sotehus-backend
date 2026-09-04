@@ -21,6 +21,8 @@ A Go application that provides real-time energy monitoring data via a REST API.
   - [GET /api/energy/cost](#get-apienergycost)
   - [GET /api/solis](#get-apisolis)
   - [GET /api/solis/soc](#get-apisolissoc)
+  - [GET /api/weather](#get-apiweather)
+  - [GET /api/weather/history](#get-apiweatherhistory)
   - [GET /health](#get-health)
 - [Persistent Parameters](#persistent-parameters)
   - [Overview](#parameters-overview)
@@ -35,6 +37,7 @@ A Go application that provides real-time energy monitoring data via a REST API.
   - [Solar Process](#solar-process)
   - [FFR Process](#ffr-process)
   - [Solis Process](#solis-process)
+  - [Weather Process](#weather-process)
 - [Configuration](#configuration)
 - [Project Structure](#project-structure)
 - [Building and Running](#building-and-running)
@@ -60,6 +63,7 @@ The Sotehus system monitors and visualizes energy data for a household with sola
 - **FFR Sensor** – An Arduino system measuring grid frequency at high precision. Data is sent via serial link to the [ffr-collector](https://github.com/jorgen-simonsson/ffr-collector) service on sotehus-rugged, which converts it to MQTT and publishes to the Mosquitto broker at high rate.
 - **SolarEdge Inverter (Modbus → MQTT)** – A local container running [solaredge2mqtt](https://github.com/DerOetzi/solaredge2mqtt) reads solar production data directly from the SolarEdge inverter via Modbus and publishes it to the MQTT topic `solaredge/modbus/inverter`. This replaces the cloud API when the `use_local_mqtt_solar` parameter is enabled.
 - **Solis Inverter (Modbus → MQTT)** – A local `solis2mqtt` daemon reads grid meter and battery/inverter telemetry from a Solis hybrid inverter via Modbus RTU and publishes a flat JSON payload to the MQTT topic `solis/modbus` every ~1 second. See `SOLIS_MQTT_PAYLOAD.md` for the full payload schema.
+- **Weather Station (Ecowitt GW1200 → MQTT)** – A local poller (see `ref/main.go`) reads live data from an Ecowitt GW1200 gateway's `get_livedata_info` HTTP API and publishes it as a `{value, unitOfMeasure}` JSON object per reading to the MQTT topic `weather/gw1200/json`.
 
 **External APIs:**
 
@@ -88,6 +92,8 @@ All data is written to the `power_monitoring` measurement. The grid service aggr
 
 Solis inverter data is written separately, to its own `solis` bucket (created automatically on startup if it doesn't exist) rather than into `power_monitoring`. Each MQTT payload received on `solis/modbus` becomes one record in the `solis_inverter` measurement, with every property from the payload (`voltage.L1`, `current.L1`, `power.total`, `battery.SOC`, `battery.power`, `solar.power`, etc. — see `SOLIS_MQTT_PAYLOAD.md`) written verbatim as a field, unmodified.
 
+Weather station data is written separately again, to its own `weather` bucket (also created automatically on startup if it doesn't exist). Each MQTT payload received on `weather/gw1200/json` becomes one record in the `weather_station` measurement, with the numeric value of every reading (`outdoor_temp`, `outdoor_humidity`, `wind_speed`, `solar_radiation`, etc. — the field set depends on which sensors are connected) written as a field. Units are not stored in InfluxDB; they are only carried in the in-memory "last received" state exposed by `GET /api/weather`.
+
 ### Frontend
 
 The frontend is a PWA ([sotehus-pwa](https://github.com/jorgen-simonsson/sotehus-pwa)) running as a Docker container on sotehus-pi5. It accesses the backend via Tailscale to view data and edit parameters.
@@ -110,6 +116,7 @@ graph LR
         SQLITE["SQLite"]
         SE2MQTT["solaredge2mqtt<br/>(Modbus → MQTT)"]
         SOLIS2MQTT["solis2mqtt<br/>(Modbus → MQTT)"]
+        GW1200POLLER["gw1200 poller<br/>(HTTP → MQTT)"]
     end
 
     subgraph External APIs
@@ -123,6 +130,9 @@ graph LR
     SOLIS_INVERTER["Solis Hybrid Inverter"] -- Modbus RTU --> SOLIS2MQTT
     SOLIS2MQTT -- MQTT --> MOSQUITTO
 
+    GW1200["Ecowitt GW1200<br/>Weather Gateway"] -- HTTP poll --> GW1200POLLER
+    GW1200POLLER -- MQTT --> MOSQUITTO
+
     P1["Smart Gateway P1<br/>(electrical meter)"] -- MQTT / WiFi --> MOSQUITTO
     FFR_SENSOR -- serial --> FFR_COLLECTOR
     FFR_COLLECTOR -- MQTT --> MOSQUITTO
@@ -131,11 +141,13 @@ graph LR
     MOSQUITTO -- frequency data --> BACKEND
     MOSQUITTO -- solar production --> BACKEND
     MOSQUITTO -- solis data --> BACKEND
+    MOSQUITTO -- weather data --> BACKEND
     SOLAREDGE -- solar production (cloud API, fallback) --> BACKEND
     SPOTPRICE -- spot prices --> BACKEND
 
     BACKEND -- write every 5s --> INFLUXDB
     BACKEND -- write every ~1s (solis bucket) --> INFLUXDB
+    BACKEND -- write per message (weather bucket) --> INFLUXDB
     BACKEND -- read/write --> SQLITE
     INFLUXDB -- cron backup --> BACKUP
 
@@ -149,6 +161,7 @@ This backend service aggregates data from multiple sources to provide:
 - **Electricity Price** - Current spot price per kWh from Swedish electricity market
 - **Solar Production** - Current solar panel output via local MQTT (Modbus bridge) or SolarEdge cloud API
 - **Grid Frequency** - Real-time grid frequency from FFR collector via MQTT
+- **Weather** - Local weather station readings (temperature, humidity, wind, rain, etc.) via MQTT
 
 ## Swagger UI
 
@@ -412,6 +425,60 @@ The endpoint queries the `battery.SOC` field in the `solis` bucket and downsampl
 - `500` – Failed to query InfluxDB
 - `503` – InfluxDB not configured
 
+### `GET /api/weather`
+
+Returns every value last received from the local weather station over MQTT, read from in-memory state (not InfluxDB) — so it reflects the most recent MQTT message even if InfluxDB is unavailable.
+
+**Response:**
+```json
+{
+    "timestamp": "2026-02-22T00:15:00+01:00",
+    "readings": {
+        "outdoor_temp": { "value": 21.5, "unitOfMeasure": "C" },
+        "outdoor_humidity": { "value": 54, "unitOfMeasure": "%" },
+        "wind_speed": { "value": 3.2, "unitOfMeasure": "m/s" }
+    }
+}
+```
+
+**Field descriptions:**
+- `timestamp` – Time the last MQTT message was received (local time)
+- `readings` – Every value/unit pair from the last message, keyed by reading name (the set of keys depends on which sensors are connected to the weather gateway)
+
+**Errors:**
+- `404` – No weather data received yet (no MQTT message since the server started)
+
+### `GET /api/weather/history`
+
+Returns every weather record stored in the `weather` InfluxDB bucket between `start` and `stop`, with timestamps. Unlike `GET /api/solis/soc`, no aggregation window is applied — one record is returned per MQTT message received in the range, with whichever fields were present in that message.
+
+**Parameters:**
+- `start` – Start timestamp in RFC3339 format (e.g., `2026-02-01T00:00:00+01:00`)
+- `stop` – Stop timestamp in RFC3339 format (e.g., `2026-02-21T00:00:00+01:00`)
+
+**Response:**
+```json
+[
+    {
+        "timestamp": "2026-02-01T00:15:00+01:00",
+        "values": { "outdoor_temp": 21.5, "outdoor_humidity": 54 }
+    },
+    {
+        "timestamp": "2026-02-01T00:16:00+01:00",
+        "values": { "outdoor_temp": 21.6, "outdoor_humidity": 53 }
+    }
+]
+```
+
+**Field descriptions:**
+- `timestamp` – Time of the record (local time)
+- `values` – Numeric value of every reading present in that record (units are not stored in InfluxDB — see `GET /api/weather` for units)
+
+**Errors:**
+- `400` – Missing or invalid start/stop parameter, or stop is before start
+- `500` – Failed to query InfluxDB
+- `503` – InfluxDB not configured
+
 ### `GET /health`
 
 Health check endpoint.
@@ -619,6 +686,14 @@ Each entry maps an MQTT topic to an InfluxDB field name. All values are aggregat
 - Exposed via `GET /api/solis`, which reads the latest record back out of the `solis` bucket and derives `household_load` from the power balance
 - Historical SOC exposed via `GET /api/solis/soc`, which averages `battery.SOC` into caller-specified time windows
 
+### Weather Process
+- Subscribes to the MQTT topic `weather/gw1200/json`, published by a local poller (see `ref/main.go`) that reads an Ecowitt GW1200 gateway's `get_livedata_info` HTTP API
+- Each MQTT message is a flat JSON object mapping reading name to `{value, unitOfMeasure}` (e.g. `{"outdoor_temp": {"value": 21.5, "unitOfMeasure": "C"}}`)
+- Stores the latest readings (value and unit) in the shared state manager — independent of the Grid write cycle, not part of `/api/data`
+- Ensures the `weather` InfluxDB bucket exists on startup, creating it automatically if missing
+- Writes the numeric value of every reading as one record in the `weather_station` measurement of the `weather` bucket per MQTT message (units are not persisted to InfluxDB)
+- Exposed via `GET /api/weather`, which reads the latest readings (with units) back out of state, and `GET /api/weather/history`, which queries the `weather` bucket for a caller-specified time range
+
 ## Configuration
 
 Environment variables (`.env` file):
@@ -679,8 +754,10 @@ SQLITE_DB_PATH=./data/params.db
 │   │   ├── solar/
 │   │   │   ├── solar.go         # SolarEdge cloud API client
 │   │   │   └── mqtt.go          # MQTT subscriber for local solar data (Modbus bridge)
-│   │   └── solis/
-│   │       └── mqtt.go          # MQTT subscriber for Solis inverter data, writes to "solis" InfluxDB bucket
+│   │   ├── solis/
+│   │   │   └── mqtt.go          # MQTT subscriber for Solis inverter data, writes to "solis" InfluxDB bucket
+│   │   └── weather/
+│   │       └── mqtt.go          # MQTT subscriber for weather station data, writes to "weather" InfluxDB bucket
 │   ├── storage/
 │   │   ├── influxdb.go          # InfluxDB client
 │   │   └── params/
@@ -696,7 +773,9 @@ SQLITE_DB_PATH=./data/params.db
 ├── .env.example
 ├── Makefile
 ├── README.md
-└── SOLIS_MQTT_PAYLOAD.md        # Solis MQTT payload schema reference
+├── SOLIS_MQTT_PAYLOAD.md        # Solis MQTT payload schema reference
+└── ref/
+    └── main.go                  # gw1200 weather station poller (HTTP → MQTT), reference for the weather/gw1200/json payload
 ```
 
 ## Building and Running
@@ -758,18 +837,26 @@ go test -v ./internal/storage/params
 | `internal/state` | 100% | Thread-safe state management |
 | `internal/config` | ~95% | Configuration loading and environment variables |
 | `internal/storage/params` | ~70% | SQLite parameter store (in-memory tests) |
-| `internal/api` | ~50% | HTTP handlers, routing, and CORS |
+| `internal/api` | ~52% | HTTP handlers, routing, and CORS |
+| `internal/services/weather` | ~49% | MQTT subscriber for weather station data (write path requires database for full testing) |
 | `internal/services/solis` | ~42% | MQTT subscriber for Solis inverter data (write path requires database for full testing) |
 | `internal/services/price` | ~32% | Spot price fetching and matching |
 | `internal/services/solar` | ~27% | SolarEdge client and sunrise/sunset calculations |
 | `internal/services/ffr` | ~19% | FFR frequency parsing and MQTT subscription |
 | `internal/services/grid` | ~13% | MQTT subscription (requires broker for full testing) |
-| `internal/storage` | ~2% | InfluxDB client (requires database for full testing) |
+| `internal/storage` | ~2% | InfluxDB client (requires database for full testing, including `GetWeatherRange`) |
 | `internal/models` | N/A | Data structures (no executable code) |
 
 Note: Some packages have lower coverage because they require external services (MQTT broker, InfluxDB, HTTP APIs) for complete integration testing. For example, `GetSOC` (backing `GET /api/solis/soc`) has handler-level tests for parameter validation and route registration, but the underlying `storage.GetSOCSeries` Flux query — like the rest of `internal/storage` — is only verified manually against a live InfluxDB instance.
 
 ## Changelog
+
+### 2026-09-04 Ver 2.4.0
+- New Weather service (`internal/services/weather`): subscribes to the MQTT topic `weather/gw1200/json` published by a local Ecowitt GW1200 poller (see `ref/main.go`), storing `{value, unitOfMeasure}` readings in the shared state manager and writing the numeric value of every reading to the new `weather` InfluxDB bucket (measurement `weather_station`), created automatically on startup
+- New endpoint: `GET /api/weather` – returns every value last received from the weather station over MQTT, read from in-memory state
+- New endpoint: `GET /api/weather/history` – returns every weather record stored in the `weather` bucket for a caller-specified `start`/`stop` range, with timestamps
+  - New `InfluxDBClient.GetWeatherRange` pivots the dynamic field set (no fixed field list, since it depends on which sensors are connected) into per-timestamp records
+  - Swagger docs regenerated to include `api.WeatherResponse`, `api.WeatherReading`, and `api.WeatherHistoryRecord`
 
 ### 2026-07-24 Ver 2.3.0
 - New endpoint: `GET /api/solis/soc` – returns battery state of charge as a time series, averaged into caller-specified windows

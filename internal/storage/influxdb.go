@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
@@ -463,6 +464,59 @@ func (c *InfluxDBClient) GetSOCSeries(start, stop time.Time, windowMinutes int) 
 	}
 
 	return points, nil
+}
+
+// WeatherRecord represents every field present in a single weather record,
+// keyed by the property name it was published under (e.g. "outdoor_temp").
+type WeatherRecord struct {
+	Time   time.Time          `json:"time"`
+	Values map[string]float64 `json:"values"`
+}
+
+// GetWeatherRange returns every record from the "weather" bucket's
+// "weather_station" measurement between start and stop, in time order. Each
+// record holds whichever fields were present in the MQTT payload at that
+// point in time — the field set is not fixed, so no field filter is applied.
+func (c *InfluxDBClient) GetWeatherRange(start, stop time.Time) ([]WeatherRecord, error) {
+	queryAPI := c.client.QueryAPI(c.org)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	query := fmt.Sprintf(`
+		from(bucket: "weather")
+		|> range(start: %s, stop: %s)
+		|> filter(fn: (r) => r._measurement == "weather_station")
+		|> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+		|> sort(columns: ["_time"])
+	`, start.Format(time.RFC3339), stop.Format(time.RFC3339))
+
+	result, err := queryAPI.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query weather range: %w", err)
+	}
+
+	var records []WeatherRecord
+	for result.Next() {
+		record := result.Record()
+
+		values := make(map[string]float64)
+		for k, v := range record.Values() {
+			if strings.HasPrefix(k, "_") || k == "table" || k == "result" {
+				continue
+			}
+			if f, ok := v.(float64); ok {
+				values[k] = f
+			}
+		}
+
+		records = append(records, WeatherRecord{Time: record.Time(), Values: values})
+	}
+	if result.Err() != nil {
+		return nil, fmt.Errorf("error reading weather range result: %w", result.Err())
+	}
+
+	return records, nil
 }
 
 // Close closes the InfluxDB client connection

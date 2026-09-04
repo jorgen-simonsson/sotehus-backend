@@ -157,6 +157,35 @@ definitions:
         example: 1.2.0
         type: string
     type: object
+  api.WeatherHistoryRecord:
+    properties:
+      timestamp:
+        example: "2026-02-22T00:15:00+01:00"
+        type: string
+      values:
+        additionalProperties:
+          type: number
+        type: object
+    type: object
+  api.WeatherReading:
+    properties:
+      unitOfMeasure:
+        example: C
+        type: string
+      value:
+        example: 21.5
+        type: number
+    type: object
+  api.WeatherResponse:
+    properties:
+      readings:
+        additionalProperties:
+          $ref: '#/definitions/api.WeatherReading'
+        type: object
+      timestamp:
+        example: "2026-02-22T00:15:00+01:00"
+        type: string
+    type: object
   models.APIResponse:
     properties:
       frequency:
@@ -625,6 +654,63 @@ paths:
       summary: Get API version
       tags:
       - system
+  /api/weather:
+    get:
+      description: Returns every value last received from the local weather station
+        over MQTT
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.WeatherResponse'
+        "404":
+          description: No weather data received yet
+          schema:
+            type: string
+      summary: Get latest weather station readings
+      tags:
+      - weather
+  /api/weather/history:
+    get:
+      description: Returns every weather record stored in the "weather" InfluxDB bucket
+        between start and stop, with timestamps
+      parameters:
+      - description: Start timestamp (RFC3339 format, e.g. 2026-02-01T00:00:00+01:00)
+        in: query
+        name: start
+        required: true
+        type: string
+      - description: Stop timestamp (RFC3339 format, e.g. 2026-02-21T00:00:00+01:00)
+        in: query
+        name: stop
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/api.WeatherHistoryRecord'
+            type: array
+        "400":
+          description: Invalid start/stop parameter
+          schema:
+            type: string
+        "500":
+          description: Failed to query weather data
+          schema:
+            type: string
+        "503":
+          description: InfluxDB not configured
+          schema:
+            type: string
+      summary: Get weather records for a period
+      tags:
+      - weather
   /health:
     get:
       description: Returns the health status of the API

@@ -1282,3 +1282,173 @@ func TestCalculateHouseholdLoad(t *testing.T) {
 		})
 	}
 }
+
+func TestGetWeather_NoDataYet(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, nil, nil, logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/weather", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetWeather(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func TestGetWeather_RouteRegistered(t *testing.T) {
+	router, _ := newTestRouter(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/weather", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	// No weather data has been received in this router's fresh state manager,
+	// so the handler itself returns 404 - distinguish that from an
+	// unregistered route by checking it's our message, not the mux's own.
+	if !strings.Contains(rec.Body.String(), "No weather data received yet") {
+		t.Errorf("Route /api/weather not found or returned unexpected body: %q", rec.Body.String())
+	}
+}
+
+func TestGetWeather_ReturnsLatestReadings(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, nil, nil, logger)
+
+	mgr.UpdateWeather(map[string]models.WeatherReading{
+		"outdoor_temp": {Value: 21.5, UnitOfMeasure: "C"},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/weather", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetWeather(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Status code = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var response WeatherResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	rd, ok := response.Readings["outdoor_temp"]
+	if !ok {
+		t.Fatal("expected outdoor_temp reading in response")
+	}
+	if rd.Value != 21.5 || rd.UnitOfMeasure != "C" {
+		t.Errorf("outdoor_temp = %+v, want {Value:21.5 UnitOfMeasure:C}", rd)
+	}
+}
+
+func TestGetWeatherHistory_NoInfluxDB(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, nil, nil, logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/weather/history?start=2026-02-01T00:00:00Z&stop=2026-02-02T00:00:00Z", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetWeatherHistory(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestGetWeatherHistory_RouteRegistered(t *testing.T) {
+	router, _ := newTestRouter(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/weather/history?start=2026-02-01T00:00:00Z&stop=2026-02-02T00:00:00Z", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	// nil InfluxDB in newTestRouter means 503, not 404 - route exists
+	if rec.Code == http.StatusNotFound {
+		t.Error("Route /api/weather/history not found")
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestGetWeatherHistory_MissingStart(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, &storage.InfluxDBClient{}, nil, logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/weather/history?stop=2026-02-02T00:00:00Z", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetWeatherHistory(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetWeatherHistory_MissingStop(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, &storage.InfluxDBClient{}, nil, logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/weather/history?start=2026-02-01T00:00:00Z", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetWeatherHistory(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetWeatherHistory_InvalidStartFormat(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, &storage.InfluxDBClient{}, nil, logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/weather/history?start=bad&stop=2026-02-02T00:00:00Z", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetWeatherHistory(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetWeatherHistory_InvalidStopFormat(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, &storage.InfluxDBClient{}, nil, logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/weather/history?start=2026-02-01T00:00:00Z&stop=bad", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetWeatherHistory(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetWeatherHistory_StopBeforeStart(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mgr := state.NewManager()
+	handler := NewHandler(mgr, &storage.InfluxDBClient{}, nil, logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/weather/history?start=2026-02-02T00:00:00Z&stop=2026-02-01T00:00:00Z", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetWeatherHistory(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}

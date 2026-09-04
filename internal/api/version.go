@@ -6,7 +6,7 @@ import (
 )
 
 // APIVersion is the current version of the API
-const APIVersion = "2.3.0"
+const APIVersion = "2.4.0"
 
 // VersionResponse represents the version response
 type VersionResponse struct {
