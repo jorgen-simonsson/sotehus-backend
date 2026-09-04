@@ -49,10 +49,13 @@ The entry point (`cmd/server/main.go`) wires up all components and starts indepe
 | Solar (cloud) | `internal/services/solar/solar.go` | SolarEdge Monitoring API | No |
 | Solar (MQTT) | `internal/services/solar/mqtt.go` | MQTT `solaredge/modbus/inverter` | No |
 | Solis | `internal/services/solis` | MQTT topic `solis/modbus` (see `SOLIS_MQTT_PAYLOAD.md`) | Yes — every payload written verbatim to the separate `solis` bucket, measurement `solis_inverter` |
+| Weather | `internal/services/weather` | MQTT topic `weather/gw1200/json` (see `ref/main.go`) | Yes — numeric value of every reading written to the separate `weather` bucket, measurement `weather_station` |
 
 The **Grid service** is the InfluxDB writer for the whole system's primary `power_monitoring` measurement. It aggregates fields from multiple MQTT topics (defined in `grid.GridTopics`) and also pulls `solarEnergyAck` and `solarFrequency` from the state manager to include in each write.
 
 The **Solis service** writes to a separate InfluxDB bucket (`solis`, created automatically on startup if missing) rather than the shared `power_monitoring` measurement — each MQTT payload becomes one record with all of that payload's fields, unmodified.
+
+The **Weather service** subscribes to the local weather station's MQTT topic (`weather/gw1200/json`, published as `map[string]{value, unitOfMeasure}` — see `ref/main.go`). It keeps the latest readings (value + unit) in the state manager for `GET /api/weather`, and writes the numeric value of every reading to the separate `weather` bucket (created automatically on startup if missing), measurement `weather_station` — one record per MQTT message. `GET /api/weather/history` queries that bucket for a caller-specified time range.
 
 The **FFR service** accumulates frequency samples into the state manager. `state.Manager.GetAndResetAverageFrequency()` is called by the Grid service each write cycle — it computes the average of all samples since the last call and resets the accumulator.
 

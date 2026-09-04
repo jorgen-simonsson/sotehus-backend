@@ -528,6 +528,89 @@
                 }
             }
         },
+        "/api/weather": {
+            "get": {
+                "description": "Returns every value last received from the local weather station over MQTT",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "weather"
+                ],
+                "summary": "Get latest weather station readings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.WeatherResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "No weather data received yet",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/weather/history": {
+            "get": {
+                "description": "Returns every weather record stored in the \"weather\" InfluxDB bucket between start and stop, with timestamps",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "weather"
+                ],
+                "summary": "Get weather records for a period",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Start timestamp (RFC3339 format, e.g. 2026-02-01T00:00:00+01:00)",
+                        "name": "start",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Stop timestamp (RFC3339 format, e.g. 2026-02-21T00:00:00+01:00)",
+                        "name": "stop",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/api.WeatherHistoryRecord"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid start/stop parameter",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to query weather data",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "503": {
+                        "description": "InfluxDB not configured",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
                 "description": "Returns the health status of the API",
@@ -766,6 +849,49 @@
                 "version": {
                     "type": "string",
                     "example": "1.2.0"
+                }
+            }
+        },
+        "api.WeatherHistoryRecord": {
+            "type": "object",
+            "properties": {
+                "timestamp": {
+                    "type": "string",
+                    "example": "2026-02-22T00:15:00+01:00"
+                },
+                "values": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number"
+                    }
+                }
+            }
+        },
+        "api.WeatherReading": {
+            "type": "object",
+            "properties": {
+                "unitOfMeasure": {
+                    "type": "string",
+                    "example": "C"
+                },
+                "value": {
+                    "type": "number",
+                    "example": 21.5
+                }
+            }
+        },
+        "api.WeatherResponse": {
+            "type": "object",
+            "properties": {
+                "readings": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/api.WeatherReading"
+                    }
+                },
+                "timestamp": {
+                    "type": "string",
+                    "example": "2026-02-22T00:15:00+01:00"
                 }
             }
         },

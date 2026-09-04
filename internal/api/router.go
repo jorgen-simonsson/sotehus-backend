@@ -25,6 +25,8 @@ func NewRouter(state *state.Manager, influxDB *storage.InfluxDBClient, paramsSto
 	mux.HandleFunc("GET /api/energy/cost", handler.GetEnergyCost)
 	mux.HandleFunc("GET /api/solis", handler.GetSolis)
 	mux.HandleFunc("GET /api/solis/soc", handler.GetSOC)
+	mux.HandleFunc("GET /api/weather", handler.GetWeather)
+	mux.HandleFunc("GET /api/weather/history", handler.GetWeatherHistory)
 	mux.HandleFunc("GET /health", handler.HealthCheck)
 
 	// Parameter routes

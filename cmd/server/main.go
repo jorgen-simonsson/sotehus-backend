@@ -18,6 +18,7 @@ import (
 	"github.com/jorgen-simonsson/sotehus-backend/internal/services/price"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/services/solar"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/services/solis"
+	"github.com/jorgen-simonsson/sotehus-backend/internal/services/weather"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/state"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/storage"
 	"github.com/jorgen-simonsson/sotehus-backend/internal/storage/params"
@@ -195,6 +196,25 @@ func main() {
 		}
 	} else {
 		logger.Info("MQTT not configured, Solis service disabled")
+	}
+
+	// Start Weather service (MQTT)
+	if cfg.MQTTBrokerHost != "" {
+		weatherService, err := weather.NewService(cfg, stateManager, influxDB, logger)
+		if err != nil {
+			logger.Error("Failed to create weather service", "error", err)
+		} else {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := weatherService.Start(ctx); err != nil {
+					logger.Error("Weather service error", "error", err)
+				}
+			}()
+			logger.Info("Weather service started")
+		}
+	} else {
+		logger.Info("MQTT not configured, weather service disabled")
 	}
 
 	// Create HTTP router

@@ -26,6 +26,8 @@ type Manager struct {
 	solarEnergySet bool
 	solarFrequency float64 // last ac.frequency value (Hz)
 	solarFreqSet   bool
+
+	weatherData models.WeatherData
 }
 
 // NewManager creates a new state manager with default values
@@ -42,6 +44,9 @@ func NewManager() *Manager {
 			Valid: false,
 		},
 		frequencyData: models.FrequencyData{
+			Valid: false,
+		},
+		weatherData: models.WeatherData{
 			Valid: false,
 		},
 	}
@@ -215,4 +220,23 @@ func (m *Manager) GetSolarFrequency() (float64, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.solarFrequency, m.solarFreqSet
+}
+
+// UpdateWeather stores the latest set of readings received from the weather station over MQTT.
+func (m *Manager) UpdateWeather(readings map[string]models.WeatherReading) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.weatherData = models.WeatherData{
+		Valid:      true,
+		Readings:   readings,
+		LastUpdate: time.Now(),
+	}
+}
+
+// GetWeatherData returns a copy of the current weather data
+func (m *Manager) GetWeatherData() models.WeatherData {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.weatherData
 }

@@ -4,6 +4,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jorgen-simonsson/sotehus-backend/internal/models"
 )
 
 func TestNewManager(t *testing.T) {
@@ -349,5 +351,36 @@ func TestSolarFrequency(t *testing.T) {
 	}
 	if val != 50.02 {
 		t.Errorf("solarFrequency = %f, want %f", val, 50.02)
+	}
+}
+
+func TestUpdateWeather(t *testing.T) {
+	m := NewManager()
+
+	// Initially invalid
+	data := m.GetWeatherData()
+	if data.Valid {
+		t.Error("weatherData should not be valid initially")
+	}
+
+	readings := map[string]models.WeatherReading{
+		"outdoor_temp":     {Value: 21.5, UnitOfMeasure: "C"},
+		"outdoor_humidity": {Value: 54, UnitOfMeasure: "%"},
+	}
+	m.UpdateWeather(readings)
+
+	data = m.GetWeatherData()
+	if !data.Valid {
+		t.Error("weatherData should be valid after update")
+	}
+	if data.LastUpdate.IsZero() {
+		t.Error("weatherData.LastUpdate should be set after update")
+	}
+	rd, ok := data.Readings["outdoor_temp"]
+	if !ok {
+		t.Fatal("expected outdoor_temp reading to be present")
+	}
+	if rd.Value != 21.5 || rd.UnitOfMeasure != "C" {
+		t.Errorf("outdoor_temp = %+v, want {Value:21.5 UnitOfMeasure:C}", rd)
 	}
 }
