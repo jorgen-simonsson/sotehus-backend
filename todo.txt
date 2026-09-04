@@ -1,0 +1,5 @@
+Local weather data is available at the MQTT broker.
+For topic and details of the payload see the ref/main.go (that is putting the data on the broker)
+For each weather messsage received  add a record to a new bucket 'weather' in influxdb holding all the values received
+
+
